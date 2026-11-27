@@ -32,9 +32,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, FindWindowW, GetWindowTextW, MSG,
-    MsgWaitForMultipleObjects, OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SW_HIDE,
-    WINEVENT_OUTOFCONTEXT,
+    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, FindWindowW, GetWindowTextW,
+    GetWindowThreadProcessId, MSG, MsgWaitForMultipleObjects, OBJID_WINDOW, PM_REMOVE,
+    PeekMessageW, QS_ALLINPUT, SW_HIDE, WINEVENT_OUTOFCONTEXT,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -269,6 +269,9 @@ pub struct Console {
     pub host: u32,
     /// The console's window.
     pub window: isize,
+    /// The console's client, which Windows names as its window's owner
+    /// (`GetWindowThreadProcessId`).
+    pub client: u32,
     /// A hidden window of the console's client, made on a thread of its
     /// own, another thread than the one Windows names as the console
     /// window's ([`Console::with_client_window`]); 0 for a
@@ -432,9 +435,14 @@ impl Console {
         }
         // SAFETY: the hook set above, removed once.
         let _ = unsafe { UnhookWinEvent(hook) };
+        let window = RENAMED.with(Cell::get);
+        let mut client = 0u32;
+        // SAFETY: `client` is a local; an invalid handle answers 0.
+        unsafe { GetWindowThreadProcessId(HWND(window as *mut _), Some(&raw mut client)) };
         Self {
             host: info.dwProcessId,
-            window: RENAMED.with(Cell::get),
+            window,
+            client,
             client_window: 0,
             _job: job,
         }

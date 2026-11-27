@@ -399,7 +399,7 @@ fn in_front(process: Pid) -> Input<Entry> {
     Input::Foreground(Foreground {
         window,
         root_owner: window,
-        process,
+        process: Some(process),
         thread: 41,
         by_class: None,
         ..Foreground::BLANK

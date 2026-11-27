@@ -23,7 +23,7 @@ fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process: Pid(40),
+        process: Some(Pid(40)),
         thread: 41,
     }
 }
@@ -791,7 +791,7 @@ fn read_of(msaa: Option<HeldIds>, runtime_id: Option<RuntimeId>) -> FocusRead {
                     handle: WindowHandle(5),
                     top_level: WindowHandle(4),
                     root_owner: WindowHandle(4),
-                    process: Pid(40),
+                    process: Some(Pid(40)),
                     thread: 41,
                     desktop: false,
                 },

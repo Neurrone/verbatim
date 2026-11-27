@@ -112,7 +112,7 @@ impl PlainObject {
             handle: self.window,
             top_level: self.window,
             root_owner: self.window,
-            process: self.process,
+            process: Some(self.process),
             thread: self.thread,
             desktop: self.kind == PlainKind::Desktop,
         }

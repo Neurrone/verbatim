@@ -423,7 +423,7 @@ fn uia_past_the_hold(desk: &mut Desk) {
         QueueInput::Foreground(ForegroundReport {
             window: ONE.top_level(),
             root_owner: ONE.top_level(),
-            process: ONE.pid,
+            process: Some(ONE.pid),
             thread: 41,
             class: "Frame".to_owned(),
             ghost: None,
@@ -462,7 +462,7 @@ fn uia_past_the_hold(desk: &mut Desk) {
         QueueInput::Foreground(ForegroundReport {
             window: TWO.top_level(),
             root_owner: TWO.top_level(),
-            process: TWO.pid,
+            process: Some(TWO.pid),
             thread: 41,
             class: "Frame".to_owned(),
             ghost: None,

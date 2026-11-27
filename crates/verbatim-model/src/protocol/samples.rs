@@ -67,7 +67,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
             let facet = crate::tell::WindowFacet {
                 handle: crate::WindowHandle(4),
                 class: "Notepad".to_owned(),
-                process: Pid(2),
+                process: Some(Pid(2)),
                 thread: 3,
             };
             OutpostToCore::Hung(crate::tell::Hung {

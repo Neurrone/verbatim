@@ -67,13 +67,10 @@ trait FrontReads {
     fn text(&self, window: isize) -> String;
     /// Whether `window` has the `WS_DISABLED` style.
     fn disabled(&self, window: isize) -> bool;
-    /// The thread and process that own `window`
-    /// (`GetWindowThreadProcessId`).
-    fn owner(&self, window: isize) -> (u32, u32);
     /// The process whose outpost reads `window`: its owner, or a console
     /// window's console host; `None` for a window that is gone and for a
     /// console window whose host cannot be read
-    /// (`verbatim_win32::provider::provider_process`).
+    /// (`verbatim_win32::provider::serving_process`).
     fn provider(&self, window: isize) -> Option<u32>;
     /// The top of `window`'s owner chain (`GetAncestor`, `GA_ROOTOWNER`).
     fn root_owner(&self, window: isize) -> isize;
@@ -123,12 +120,13 @@ impl FrontReads for Windows {
         verbatim_win32::window::style(window) & DISABLED != 0
     }
 
-    fn owner(&self, window: isize) -> (u32, u32) {
-        verbatim_win32::window::window_owner(window)
-    }
-
     fn provider(&self, window: isize) -> Option<u32> {
-        verbatim_win32::provider::provider_process(window)
+        verbatim_win32::provider::serving_process(
+            &verbatim_win32::window_facts::SystemReads,
+            window,
+            None,
+        )
+        .map(|process| process.0)
     }
 
     fn root_owner(&self, window: isize) -> isize {
@@ -181,7 +179,7 @@ fn live_front_of(reads: &impl FrontReads) -> LiveFront {
     let Some(process) = reads.provider(window) else {
         return LiveFront::Gone;
     };
-    let (thread, _) = reads.owner(window);
+    let thread = reads.thread_of(window);
     LiveFront::Window(FrontWindow {
         window: window_handle(window),
         root_owner: window_handle(reads.root_owner(window)),
@@ -204,7 +202,10 @@ fn front_of(reads: &impl FrontReads) -> Front {
         return Front::Gone;
     }
     if window == reads.desktop() {
-        let (thread, process) = reads.owner(window);
+        let Some(process) = reads.provider(window) else {
+            return Front::Gone;
+        };
+        let thread = reads.thread_of(window);
         return Front::Desktop(DesktopFront {
             desktop: window_handle(window),
             process: verbatim_model::Pid(process),
@@ -212,7 +213,13 @@ fn front_of(reads: &impl FrontReads) -> Front {
         });
     }
     if let Some(stands_for) = reads.ghost_of(window) {
-        let (thread, process) = reads.owner(stands_for);
+        // The application the ghost stands for is the one serving the hung
+        // window, a console window's console host; one no process is read
+        // as serving is gone, as the live front takes it.
+        let Some(process) = reads.provider(stands_for) else {
+            return Front::Gone;
+        };
+        let thread = reads.thread_of(stands_for);
         return Front::Ghost(GhostFront {
             ghost: window_handle(window),
             stands_for: window_handle(stands_for),
@@ -278,7 +285,7 @@ mod tests {
         }
 
         fn thread_of(&self, window: isize) -> u32 {
-            u32::try_from(window).unwrap()
+            u32::try_from(window).unwrap() + 100
         }
 
         fn thread_focus(&self, _: u32) -> Option<isize> {
@@ -305,11 +312,6 @@ mod tests {
 
         fn disabled(&self, _: isize) -> bool {
             self.disabled
-        }
-
-        fn owner(&self, window: isize) -> (u32, u32) {
-            let window = u32::try_from(window).unwrap();
-            (window + 100, window + 1_000)
         }
 
         fn provider(&self, window: isize) -> Option<u32> {
@@ -371,13 +373,13 @@ mod tests {
     }
 
     /// A ghost in front, whose thread has no focus window, is the ghost
-    /// itself, with its text, the window it stands for, that window's
-    /// application and thread, and its disabled style.
+    /// itself, with its text, the window it stands for, the process serving
+    /// that window and its thread, and its disabled style.
     #[test]
     fn a_ghost_in_front_is_read_with_its_facts() {
         let reads = Reads {
             foreground: 7,
-            existing: vec![7],
+            existing: vec![7, 9],
             ghost: Some((7, 9)),
             hung: vec![7, 9],
             disabled: true,
@@ -388,7 +390,7 @@ mod tests {
             Front::Ghost(GhostFront {
                 ghost: WindowHandle(7),
                 stands_for: WindowHandle(9),
-                process: verbatim_model::Pid(1_009),
+                process: verbatim_model::Pid(2_009),
                 thread: 109,
                 name: "window 7".to_owned(),
                 unavailable: true,
@@ -429,7 +431,8 @@ mod tests {
         assert_eq!(front_of(&responsive), Front::Responsive);
     }
 
-    /// No window in front reads the desktop window, with its owner, as
+    /// No window in front reads the desktop window, with the process
+    /// serving it, as
     /// NVDA's `kwargsFromSuper` takes it; its thread's focus window would be
     /// read in its place.
     #[test]
@@ -442,7 +445,7 @@ mod tests {
             front_of(&nothing),
             Front::Desktop(DesktopFront {
                 desktop: WindowHandle(3),
-                process: verbatim_model::Pid(1_003),
+                process: verbatim_model::Pid(2_003),
                 thread: 103,
             })
         );

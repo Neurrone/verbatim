@@ -13,7 +13,7 @@ fn read(node: u64, values: Vec<(PropertyId, PropertyValue)>) -> NodeRead {
             handle: WindowHandle(5),
             top_level: WindowHandle(5),
             root_owner: WindowHandle(5),
-            process: Pid(9),
+            process: Some(Pid(9)),
             thread: 1,
             desktop: false,
         },

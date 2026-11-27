@@ -19,7 +19,7 @@ use crate::event_queue::{Foreground, Input};
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -48,7 +48,7 @@ fn the_records() -> LiveFront {
     LiveFront::Window(FrontWindow {
         window: IN_FRONT.window,
         root_owner: IN_FRONT.root_owner,
-        process: IN_FRONT.process,
+        process: IN_FRONT.process.expect("the test front names its process"),
         thread: IN_FRONT.thread,
         class: String::new(),
     })

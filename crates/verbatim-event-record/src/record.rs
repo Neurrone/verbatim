@@ -377,7 +377,12 @@ fn shows_window(event: u32, window_object: bool) -> bool {
 /// What the desktop's focus hook does with each focus event.
 fn focus_sink(target: Target, arrivals: Arc<Arrivals>) -> Sink {
     Box::new(move |raw: RawEvent| {
-        let provider = verbatim_win32::provider::provider_process(raw.hwnd);
+        let provider = verbatim_win32::provider::serving_process(
+            &verbatim_win32::window_facts::SystemReads,
+            raw.hwnd,
+            None,
+        )
+        .map(|pid| pid.0);
         let in_target = match target {
             Target::Process(pid) => provider == Some(pid),
             Target::Window { hwnd, pid } => window_in_target(hwnd, pid, raw.hwnd),

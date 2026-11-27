@@ -226,10 +226,13 @@ threads.
   the `WinEvent` thread, whatever its process, Program Manager's and the
   taskbar's included, the listener sends `Foreground` (window, its root
   owner by `GetAncestor` with `GA_ROOTOWNER`, the process holding
-  attention, the console host's for a console window whose thread an
-  event named, when the callback observed the event, the event's thread,
-  whether a console host window, integrity level by
-  `verbatim_win32::integrity::process_integrity`), none replacing another,
+  attention, the window's serving process
+  (`verbatim_win32::provider::serving_process`, the console host for a
+  console window) as an `Option<Pid>`, `None` when none can be read
+  (Claude, 2026-11-27), when the callback observed the event, the
+  event's thread, whether a console host window, that process's
+  integrity level by `verbatim_win32::integrity::process_integrity`),
+  none replacing another,
   and once its hooks are in, the window then in front
   (`Nudge::ForegroundStart`). An event whose window is not in front is
   the pending foreground, reported with the observation of a later event

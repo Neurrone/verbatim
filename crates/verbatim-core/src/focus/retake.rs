@@ -249,14 +249,15 @@ pub(crate) fn read_by(read: &FocusRead) -> Option<ReadBy> {
 
 /// The startup entry, at the listener's first foreground report
 /// `foreground`: it asks the foreground application's outpost, the console
-/// host for a console window as the report names it.
-pub(crate) fn startup(state: &SrState, foreground: &Foreground) -> CurrentFocus {
-    CurrentFocus {
+/// host for a console window as the report names it; none when no process
+/// could be read as serving the window, since no reader can be asked.
+pub(crate) fn startup(state: &SrState, foreground: &Foreground) -> Option<CurrentFocus> {
+    Some(CurrentFocus {
         why: Why::Startup,
-        window: foreground.window(),
+        window: foreground.window()?,
         trace_id: state.queue_trace.0,
         fence: crate::keys::entry::Fence::default(),
-    }
+    })
 }
 
 /// The read after the user's input desktop returned, of the application
@@ -308,7 +309,9 @@ pub(crate) fn reader_ended(
                 {
                     return None;
                 }
-                Committed::Read(_) | Committed::Ended(_) => foreground?.window(),
+                // A window in front no process is read as serving: no
+                // reader is asked.
+                Committed::Read(_) | Committed::Ended(_) => foreground?.window()?,
                 Committed::Nothing | Committed::Own => return None,
             }
         }
@@ -318,10 +321,8 @@ pub(crate) fn reader_ended(
                 return None;
             };
             let focus = state.versions.focus()?;
-            match foreground {
-                Some(foreground) if foreground.process == focus.context.source => {
-                    foreground.window()
-                }
+            match foreground.and_then(|foreground| foreground.window()) {
+                Some(front) if front.process == focus.context.source => front,
                 Some(_) | None => focus.kept.asked,
             }
         }

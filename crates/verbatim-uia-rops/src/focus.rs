@@ -371,11 +371,13 @@ fn below_the_boundary(hwnd: isize, runtime_id: &[i32], nearest: Option<isize>) -
 /// Whether a step up reached a window, `hwnd`, that another process than
 /// the nearest window's serves. Local calls only.
 fn stepped_across(hwnd: isize, nearest: Option<isize>) -> bool {
+    use verbatim_win32::provider::serving_process;
+    use verbatim_win32::window_facts::SystemReads;
     nearest.is_some_and(|nearest| {
         hwnd != 0
             && hwnd != nearest
-            && verbatim_win32::provider::provider_process(hwnd)
-                != verbatim_win32::provider::provider_process(nearest)
+            && serving_process(&SystemReads, hwnd, None)
+                != serving_process(&SystemReads, nearest, None)
     })
 }
 

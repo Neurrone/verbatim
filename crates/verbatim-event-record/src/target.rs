@@ -3,10 +3,11 @@
 use std::os::windows::io::{FromRawHandle as _, OwnedHandle, RawHandle};
 
 use serde_json::{Value, json};
-use verbatim_win32::provider::{is_top_level_window, provider_process};
+use verbatim_win32::provider::{is_top_level_window, serving_process};
 use verbatim_win32::window::{
     related, top_level_of, top_level_windows, window_class_name, window_is_visible, window_text,
 };
+use verbatim_win32::window_facts::SystemReads;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -39,7 +40,7 @@ pub(crate) enum Target {
     Window {
         /// The window.
         hwnd: isize,
-        /// `provider_process` of the window.
+        /// `serving_process` of the window.
         pid: u32,
     },
 }
@@ -89,12 +90,14 @@ pub(crate) fn resolve(selector: &Selector) -> Result<Target, String> {
                     window_field(*hwnd)
                 ));
             }
-            let pid = provider_process(*hwnd).ok_or_else(|| {
-                format!(
-                    "window {} has no process that serves it",
-                    window_field(*hwnd)
-                )
-            })?;
+            let pid = serving_process(&SystemReads, *hwnd, None)
+                .map(|pid| pid.0)
+                .ok_or_else(|| {
+                    format!(
+                        "window {} has no process that serves it",
+                        window_field(*hwnd)
+                    )
+                })?;
             Ok(Target::Window { hwnd: *hwnd, pid })
         }
         Selector::Process(text) => resolve_process(text),
@@ -203,7 +206,7 @@ fn root_facts(window: isize) -> RootFacts {
         root,
         owners,
         class: window_class_name(root),
-        process: provider_process(root),
+        process: serving_process(&SystemReads, root, None).map(|pid| pid.0),
     }
 }
 

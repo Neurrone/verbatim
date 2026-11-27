@@ -35,7 +35,7 @@ const GHOST: WindowHandle = WindowHandle(90);
 const IN_FRONT: Foreground = Foreground {
     window: HUNGWIN,
     root_owner: HUNGWIN,
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -854,7 +854,7 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
                         handle: GHOST,
                         top_level: GHOST,
                         root_owner: GHOST,
-                        process: APP,
+                        process: Some(APP),
                         thread: 41,
                         desktop: false,
                     },
@@ -1140,7 +1140,7 @@ fn the_plain_reader_answers_each_operation_from_the_ghosts_facts() {
         handle: GHOST,
         top_level: GHOST,
         root_owner: GHOST,
-        process: APP,
+        process: Some(APP),
         thread: 41,
         desktop: false,
     };

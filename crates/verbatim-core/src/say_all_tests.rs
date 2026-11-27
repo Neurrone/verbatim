@@ -30,7 +30,7 @@ use verbatim_model::request::QueueEffect;
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK

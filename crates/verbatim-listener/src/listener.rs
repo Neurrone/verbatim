@@ -299,20 +299,20 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
 }
 
 /// The report to Core of the window that came to the foreground, `front`,
-/// with its root owner, the process holding attention and that process's
-/// integrity level, read here with local calls (`GetAncestor`,
-/// `GetWindowThreadProcessId`, `GetProcessIdOfThread` for a console
-/// window whose thread its event named, and the token's integrity). Sent
-/// for every process, ignored ones included, since Core takes from it the
-/// keyboard hook's view, attention and its foreground record; none
-/// replaces another.
+/// with its root owner, the process holding attention, the one serving the
+/// window ([`verbatim_win32::provider::serving_process`]), and that
+/// process's integrity level, read here with local calls (`GetAncestor`,
+/// the serving process's reads, and the token's integrity). Sent for every
+/// process, ignored ones included, since Core takes from it the keyboard
+/// hook's view, attention and its foreground record; none replaces
+/// another. A window no process can be read as serving, one gone or a
+/// console whose client runs as another user, is reported with none.
 fn foreground_report(front: Front) -> ListenerToCore {
-    let owner = window_pid(front.window);
-    let process = if front.console && front.thread != 0 {
-        process_of_thread(front.thread).unwrap_or(owner)
-    } else {
-        owner
-    };
+    // A console window's thread is its event's, the console host's own,
+    // 0 until an event names it; any other window's is not read.
+    let raised_by =
+        (front.thread != 0).then_some(verbatim_win32::window_facts::Raised::Thread(front.thread));
+    let process = verbatim_win32::provider::serving_process(&SystemReads, front.window, raised_by);
     ListenerToCore::Foreground {
         window: front.window,
         root_owner: verbatim_win32::window::root_owner_of(front.window),
@@ -320,7 +320,8 @@ fn foreground_report(front: Front) -> ListenerToCore {
         observed_at_us: front.observed_at_us,
         thread: front.thread,
         console: front.console,
-        integrity: verbatim_win32::integrity::process_integrity(owner),
+        integrity: process
+            .and_then(|process| verbatim_win32::integrity::process_integrity(process.0)),
     }
 }
 
@@ -768,14 +769,7 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             kept.is_own(listener).then(|| kept.owner(token)).flatten()
         }
         asked::Routed::Msaa(window) => {
-            // The window's own thread stands for the thread that raised
-            // its events, which a read does not carry.
-            let window = isize::from(window);
-            let (thread, owner) = verbatim_win32::window::window_owner(window);
-            tells::routed_process(&window_class_name(window), owner, || {
-                (thread != 0).then(|| process_of_thread(thread)).flatten()
-            })
-            .map(Pid)
+            verbatim_win32::provider::serving_process(&SystemReads, isize::from(window), None)
         }
     };
     let Some(pid) = pid else {
@@ -1040,7 +1034,7 @@ fn arrived(
         let answered = if hwnd == 0 {
             0
         } else {
-            verbatim_win32::window::window_owner(hwnd).0
+            verbatim_win32::window::window_thread(hwnd)
         };
         checks.hand(pid, answered, event);
     }
@@ -1338,7 +1332,7 @@ fn front_now(observed_at_us: u64) -> Option<Front> {
     }
     Some(Front {
         window,
-        thread: verbatim_win32::window::window_owner(window).0,
+        thread: verbatim_win32::window::window_thread(window),
         console: window_class_name(window) == CONSOLE_WINDOW_CLASS,
         observed_at_us,
     })
@@ -1367,32 +1361,6 @@ fn foreground_step(outgoing: &Outgoing, step: Step) {
             );
         }
     }
-}
-
-/// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
-fn window_pid(hwnd: isize) -> u32 {
-    verbatim_win32::window::window_owner(hwnd).1
-}
-
-/// The process `thread` belongs to, read with `GetProcessIdOfThread`, a
-/// local call; `None` when the thread cannot be opened, such as one that
-/// has ended.
-fn process_of_thread(thread: u32) -> Option<u32> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        GetProcessIdOfThread, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
-    };
-    // SAFETY: OpenThread has no preconditions; the handle is owned here and
-    // closed below.
-    let handle = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) }.ok()?;
-    // SAFETY: `handle` is an open thread handle with the access the call
-    // needs.
-    let pid = unsafe { GetProcessIdOfThread(handle) };
-    // SAFETY: `handle` was opened above and is closed once.
-    unsafe {
-        let _ = CloseHandle(handle);
-    }
-    (pid != 0).then_some(pid)
 }
 
 /// Runs the focus listener on the transport's child side
@@ -1507,11 +1475,42 @@ mod tests {
         rx
     }
 
+    /// The foreground report of a console window names the process serving
+    /// it by the most direct evidence it has: the thread an event named,
+    /// which for a console window is its console host's own, read first;
+    /// with none named yet (thread 0), the host read from the client,
+    /// never the client.
+    #[test]
+    fn a_console_in_front_is_reported_with_its_hosts_process() {
+        verbatim_test_console::Console::with(|console| {
+            let report = |thread| match foreground_report(Front {
+                window: console.window,
+                thread,
+                console: true,
+                observed_at_us: 0,
+            }) {
+                ListenerToCore::Foreground { process, .. } => process,
+                other => panic!("a foreground report: {other:?}"),
+            };
+            assert_eq!(report(0), Some(Pid(console.host)));
+            // SAFETY: GetCurrentThreadId has no preconditions.
+            let named = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+            assert_eq!(
+                report(named),
+                Some(Pid(std::process::id())),
+                "the named thread's process is taken, not the client route"
+            );
+        });
+    }
+
     #[test]
     fn a_threads_process_is_read_from_the_thread() {
         // SAFETY: GetCurrentThreadId has no preconditions.
         let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
-        assert_eq!(process_of_thread(thread), Some(std::process::id()));
+        assert_eq!(
+            verbatim_win32::window_facts::WindowReads::process_of_thread(&SystemReads, thread),
+            Some(std::process::id())
+        );
     }
 
     /// The desktop window, which the desktop's root element has as its
@@ -1890,11 +1889,13 @@ mod tests {
         let [ListenerToCore::Hung(hung)] = sent else {
             panic!("one report of a hung window: {sent:?}");
         };
-        let (thread, process) = verbatim_win32::window::window_owner(desktop_window());
+        let thread = verbatim_win32::window::window_thread(desktop_window());
+        let process =
+            verbatim_win32::provider::serving_process(&SystemReads, desktop_window(), None);
         let none = verbatim_model::tell::WindowFacet {
             handle: WindowHandle(0),
             class: String::new(),
-            process: Pid(0),
+            process: None,
             thread: 0,
         };
         assert_eq!(
@@ -1903,7 +1904,7 @@ mod tests {
                 &verbatim_model::tell::WindowFacet {
                     handle: desktop_handle(),
                     class: "#32769".to_owned(),
-                    process: Pid(process),
+                    process,
                     thread,
                 },
                 &none,
@@ -2011,7 +2012,7 @@ mod tests {
         drop(callback);
         let runtime_id = RuntimeId(sender.runtime_id());
         let desktop = desktop_handle();
-        let (desktop_thread, _) = verbatim_win32::window::window_owner(desktop_window());
+        let desktop_thread = verbatim_win32::window::window_thread(desktop_window());
         assert_eq!(first.kind, EventKind::UiaFocus);
         assert_eq!(
             first.object,
@@ -2810,11 +2811,17 @@ mod tests {
             };
             self.count("class", class.to_owned())
         }
-        fn owner(&self, _window: isize) -> (u32, u32) {
-            self.count("owner", (1, std::process::id()))
+        fn owner(&self, _window: isize) -> verbatim_win32::window_facts::Owner {
+            self.count(
+                "owner",
+                verbatim_win32::window_facts::Owner::new(1, std::process::id()),
+            )
         }
-        fn console_host(&self, _window: isize) -> Option<u32> {
+        fn console_host(&self, _client: u32) -> Option<u32> {
             self.count("console_host", None)
+        }
+        fn process_of_thread(&self, _thread: u32) -> Option<u32> {
+            self.count("process_of_thread", Some(std::process::id()))
         }
         fn parent(&self, _window: isize) -> isize {
             self.count("parent", FLOOD_DESKTOP)
@@ -2870,9 +2877,6 @@ mod tests {
         }
         fn stood_for(&self, _window: isize) -> Option<isize> {
             self.count("stood_for", None)
-        }
-        fn process_of_thread(&self, _thread: u32) -> Option<u32> {
-            self.count("process_of_thread", Some(std::process::id()))
         }
         fn input_desktop_opens(&self) -> bool {
             self.count("input_desktop_opens", true)

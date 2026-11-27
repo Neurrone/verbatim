@@ -159,7 +159,7 @@ mod tests {
         WindowFacet {
             handle: WindowHandle(handle),
             class: class.to_owned(),
-            process: Pid(4),
+            process: Some(Pid(4)),
             thread: 5,
         }
     }

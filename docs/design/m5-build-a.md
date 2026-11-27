@@ -103,7 +103,7 @@ The listener resolves a process's identity once, from a process handle it holds,
 | Process | Identity |
 |---|---|
 | Any | its executable's file name without the extension, lower-cased, dots kept (`verbatim_process::held::stem_of`) |
-| A console host, the process a console window's facts are routed to | the console client's identity: the stem of the client process, which a fact names as the process `GetWindowThreadProcessId` gives for its window (the listener's `routed_process` already reads it), and an `Identify` names as its `client` (section 4.2) |
+| A console host, the process a console window's facts are routed to | the console client's identity: the stem of the client process, which a fact names as the process `GetWindowThreadProcessId` gives for its window (the window's owner, which `verbatim_win32::provider::serving_process` reads), and an `Identify` names as its `client` (section 4.2) |
 | `wwahost.exe` | the part after `!` of its application user model id (`GetApplicationUserModelId`), lower-cased; its own stem when that is empty (`appModules/wwahost.py` 18 to 38) |
 | `msedgewebview2.exe` | its parent's identity (`NtQueryInformationProcess`, `ProcessBasicInformation`), only when the parent process is still the one that created it, judged by its creation time being earlier than the child's; its own stem otherwise, as NVDA falls back on `LookupError` (`appModules/msedgewebview2.py` 12 and after; `appModuleHandler.py` 172 to 175) |
 | Verbatim's own process | `verbatim`, stated by Core in the listener's configuration and never resolved (Dickson, 2026-11-09) |

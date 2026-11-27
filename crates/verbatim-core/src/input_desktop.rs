@@ -115,13 +115,19 @@ pub(crate) fn due(state: &SrState) -> Option<u64> {
 pub(crate) fn tick(
     state: &mut SrState,
     now_us: u64,
-    front: Option<crate::event_queue::RequestWindow>,
+    front: Option<&crate::event_queue::Foreground>,
 ) -> Option<CurrentFocus> {
     if due(state).is_none_or(|due_us| due_us > now_us) {
         return None;
     }
     state.desktop.input = InputDesktop::User;
-    Some(crate::focus::retake::returned(state, front?))
+    let Some(window) = front?.window() else {
+        // No process could be read as serving the window in front: no
+        // reader is asked, and the read ends untried.
+        crate::focus::validity::untried_read(state);
+        return None;
+    };
+    Some(crate::focus::retake::returned(state, window))
 }
 
 #[cfg(test)]

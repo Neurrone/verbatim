@@ -38,7 +38,7 @@ pub(crate) fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process: APP,
+        process: Some(APP),
         thread: 41,
     }
 }
@@ -137,10 +137,17 @@ pub(crate) fn win(handle: u64) -> verbatim_model::request::NodeWindow {
         handle: WindowHandle(handle),
         top_level: WindowHandle(4),
         root_owner: WindowHandle(4),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         desktop: false,
     }
+}
+
+/// [`win`] as a caret key's binding names it.
+pub(crate) fn served(handle: u64) -> verbatim_model::request::ServedWindow {
+    crate::event_queue::RequestWindow::of_node(&win(handle))
+        .expect("the application serves its window")
+        .served_window()
 }
 
 pub(crate) fn node(number: u64) -> NodeId {
@@ -358,7 +365,7 @@ pub(crate) fn in_front_at(held: &mut Held, at_us: u64, front: &Foreground) {
         verbatim_model::request::LiveFront::Window(verbatim_model::request::FrontWindow {
             window: front.window,
             root_owner: front.root_owner,
-            process: front.process,
+            process: front.process.expect("a test front names its process"),
             thread: front.thread,
             class: String::new(),
         });
@@ -1068,7 +1075,7 @@ fn window_4_in_front() -> Input<Entry> {
     Input::Foreground(Foreground {
         window: WindowHandle(4),
         root_owner: WindowHandle(4),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         by_class: None,
         ..Foreground::BLANK
@@ -1180,7 +1187,7 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
     let foreground = Foreground {
         window: WindowHandle(70),
         root_owner: WindowHandle(70),
-        process: Pid(41),
+        process: Some(Pid(41)),
         thread: 0,
         by_class: None,
         ..Foreground::BLANK
@@ -1524,7 +1531,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
     let frame = Foreground {
         window: WindowHandle(8),
         root_owner: WindowHandle(8),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         by_class: None,
         ..Foreground::BLANK
@@ -1751,7 +1758,7 @@ fn taskbar() -> verbatim_model::request::NodeWindow {
         handle: WindowHandle(90),
         top_level: WindowHandle(90),
         root_owner: WindowHandle(90),
-        process: Pid(41),
+        process: Some(Pid(41)),
         thread: 7,
         desktop: false,
     }
@@ -1856,7 +1863,7 @@ fn a_request_from_outside_the_queue_is_not_stopped_by_a_foreground_change() {
         QueueInput::Foreground(ForegroundReport {
             window: WindowHandle(70),
             root_owner: WindowHandle(70),
-            process: Pid(50),
+            process: Some(Pid(50)),
             thread: 3,
             class: "Notepad".to_owned(),
             ghost: None,
@@ -2051,4 +2058,81 @@ fn an_executed_focus_is_the_control_planes_focus_change() {
             },
         }]
     );
+}
+
+/// The route of `input`, a queue input, at `at_us`: what Core says.
+fn routed(held: &mut Held, at_us: u64, input: &verbatim_model::request::QueueInput) -> Vec<Said> {
+    crate::entries::route(
+        &mut held.state,
+        &mut held.runtime,
+        (verbatim_model::TraceId::from_raw(1), at_us),
+        input,
+    )
+    .said()
+}
+
+/// An ask from outside the queue naming a window no process could be read
+/// as serving has no outpost to go to: its asker is answered "not there"
+/// at once, and nothing is sent.
+#[test]
+fn an_outside_ask_on_a_window_with_no_serving_process_is_answered_not_there() {
+    let mut held = ready();
+    let window = verbatim_model::request::NodeWindow {
+        process: None,
+        ..win(5)
+    };
+    let said = routed(
+        &mut held,
+        1_000,
+        &verbatim_model::request::QueueInput::AskOutside {
+            asker: 7,
+            window,
+            request: crate::outside::dump(window.handle, false).question(),
+        },
+    );
+    assert_eq!(
+        said,
+        [Said::Queue(QueueEffect::Answered {
+            asker: 7,
+            outcome: verbatim_model::request::Outcome::NotThere,
+        })]
+    );
+}
+
+/// A reader's report of a hung window no process could be read as serving
+/// watches nothing and plays no sound, though the window is in front: no
+/// request can be out on it.
+#[test]
+fn a_hung_window_with_no_serving_process_is_not_watched() {
+    let mut held = ready();
+    let _ = feed_at(
+        &mut held,
+        500,
+        Input::Foreground(crate::event_queue::Foreground {
+            window: WindowHandle(5),
+            root_owner: WindowHandle(5),
+            process: Some(APP),
+            ..crate::event_queue::Foreground::BLANK
+        }),
+    );
+    let facet = verbatim_model::tell::WindowFacet {
+        handle: WindowHandle(5),
+        class: "ConsoleWindowClass".to_owned(),
+        process: None,
+        thread: 41,
+    };
+    let said = routed(
+        &mut held,
+        1_000,
+        &verbatim_model::request::QueueInput::WindowHung {
+            from: LISTENER,
+            hung: verbatim_model::tell::Hung {
+                window: facet.clone(),
+                root: facet.clone(),
+                root_owner: facet,
+                at_us: 1_000,
+            },
+        },
+    );
+    assert_eq!(said, Vec::<Said>::new());
 }

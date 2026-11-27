@@ -467,7 +467,8 @@ pub(crate) fn controlled_selection(
     let said = {
         let mut facts = cx.facts_mut();
         // The navigator moved to the item names the window its read
-        // found, so the navigator's commands can ask it.
+        // found, so the navigator's commands can ask it; with none, a
+        // window no process is read as serving, they ask nothing.
         crate::reduce::reduce_controlled_selection(&mut facts, trace_id, focus, (&item, window))
     };
     for said in said {

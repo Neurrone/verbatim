@@ -102,7 +102,7 @@ pub(super) fn verdict(
             {
                 probes.push(Probe {
                     window: window_handle(hwnd),
-                    thread: verbatim_win32::window::window_owner(hwnd).0,
+                    thread: verbatim_win32::window::window_thread(hwnd),
                     provider: uia,
                     began_us: probed.began_us,
                 });
@@ -113,17 +113,11 @@ pub(super) fn verdict(
 }
 
 /// The facts of `window` a node read in it carries, read from Windows with
-/// no call into the application.
+/// no call into the application, its process the one serving it
+/// (`verbatim_win32::window_facts::node_window`), for a console window its
+/// console host.
 pub(super) fn node_window(window: isize) -> NodeWindow {
-    let (thread, process) = verbatim_win32::window::window_owner(window);
-    NodeWindow {
-        handle: window_handle(window),
-        top_level: window_handle(verbatim_win32::window::top_level_of(window)),
-        root_owner: window_handle(verbatim_win32::window::root_owner_of(window)),
-        process: Pid(process),
-        thread,
-        desktop: window == verbatim_win32::window::desktop_window(),
-    }
+    verbatim_win32::window_facts::node_window(&verbatim_win32::window_facts::SystemReads, window)
 }
 
 /// The nearest window of `node` known without a call: its own window, the

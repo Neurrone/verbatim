@@ -15,7 +15,7 @@ const LATE: u64 = 100_000;
 pub(crate) enum Focus {
     /// An MSAA focus, of a window whose provider is known.
     Msaa {
-        /// `provider_process` of the event's window.
+        /// `serving_process` of the event's window.
         process: u32,
         /// The event's window.
         window: isize,

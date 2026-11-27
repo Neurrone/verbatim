@@ -12,8 +12,8 @@ use verbatim_model::{
 
 use crate::entries::Entry;
 use crate::entries::tests::{
-    APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, ready_at, values,
-    win,
+    APP, Held, NOTHING, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready,
+    ready_at, values, win,
 };
 use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
@@ -25,7 +25,7 @@ use verbatim_model::request::QueueEffect;
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -92,6 +92,24 @@ fn a_navigation_moves_the_navigator_and_announces_the_node_reached() {
     let navigator = state.navigator.as_ref().unwrap();
     assert_eq!(navigator.object.id, node(7));
     assert_eq!(navigator.window.unwrap().handle, WindowHandle(6));
+}
+
+/// A navigation reaching a node in a window no process could be read as
+/// serving, such as a console whose client runs as another user, has no
+/// reader to ask about it: the navigator stays where it was and nothing is
+/// said.
+#[test]
+fn a_navigation_reaching_a_window_with_no_serving_process_stays_put() {
+    let mut state = committed();
+    let before = state.navigator.clone();
+    let _ = feed_at(&mut state, 1_000, press(1, ReviewCommand::Parent, 0));
+    let mut unserved = reached(7, 6, "Buttons", Role::Group);
+    unserved.window.process = None;
+    assert_eq!(
+        feed_at(&mut state, 2_000, navigated(3, Some(unserved))),
+        NOTHING
+    );
+    assert_eq!(state.navigator, before);
 }
 
 #[test]

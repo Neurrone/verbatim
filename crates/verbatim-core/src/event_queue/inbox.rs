@@ -518,7 +518,10 @@ impl<L: Logic> Core<L> {
     /// outside the queue are untouched. Recovering windows of applications
     /// that lost attention leave the set.
     fn foreground(&mut self, foreground: Foreground) {
-        self.attended(foreground.process);
+        // A window no process is read as serving starts no outpost.
+        if let Some(process) = foreground.process {
+            self.attended(process);
+        }
         let stopped = {
             let mut shared = self.shared.borrow_mut();
             let first = shared.state.queue.foreground.is_none();

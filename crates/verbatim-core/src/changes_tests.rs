@@ -1075,7 +1075,7 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
     let elsewhere = Foreground {
         window: WindowHandle(70),
         root_owner: WindowHandle(70),
-        process: verbatim_model::Pid(41),
+        process: Some(verbatim_model::Pid(41)),
         thread: 0,
         by_class: None,
         ..Foreground::BLANK

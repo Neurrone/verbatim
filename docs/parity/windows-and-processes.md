@@ -82,8 +82,11 @@ the client's app module and learns the console host's real thread from
 the console's WinEvents ([App modules, global plugins, and add-ons: the
 mechanism](../nvda/app-modules-mechanism.md), "App modules").
 Verbatim: the focus listener sends every `WinEvent` for a console
-window to the console host's outpost, the process of the event's own
-thread (`GetProcessIdOfThread`), where its UIA events already went, and
+window to the console host's outpost, the window's serving process,
+read from the client with a local call
+(`verbatim_win32::provider::serving_process`), as are a node read in the
+console and Core's object navigation from it, where its UIA events
+already went, and
 that outpost reports its events in a console window with the client as
 the application, so one outpost reports the window, once, with one
 name. Before any event from a console, the console host's outpost

@@ -53,7 +53,7 @@ Public API:
   `GetComboBoxInfo`, a message to its application), `window_thread`, `style`, `rect`, `parent`,
   `top_child`, `related` and `is_multiline_edit`; `top_level_of`,
   `root_owner_of` (the top of the owner chain, `GA_ROOTOWNER`),
-  `window_owner` (thread and process), `foreground_window_handle`,
+  `foreground_window_handle`,
   `focus_window` (the window with the keyboard focus, else the active
   window), `thread_focus_window(thread)` (a thread's focus window alone,
   as NVDA's reads of the focus take it). `window_classes(hwnd)` reads the
@@ -91,24 +91,49 @@ Public API:
   local reads the window facts take for Core's acceptance.
 - `provider` — the process that serves a window's UI Automation
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3):
-  `provider_process(hwnd)`, `served_by`, `console_host_of(client)`,
+  `serving_process(reads, hwnd, raised_by)`, `served_by`,
   `is_top_level_window`, `parent_across_process_boundary`,
   `raw_view_parent_window`, `parent_window`, `outermost_nearest_window`
   and `plain_windows_start`. Callers in both backends use them from
   here; `verbatim-uia`'s guide describes them ([verbatim-uia](verbatim-uia.md),
   "Provider checks and the process boundary").
+- The process serving a window is decided by one rule,
+  `window_facts::Owner::serving_process(class, reads, raised_by)`, which
+  `provider::serving_process(reads, hwnd, raised_by)` reads the window's class and
+  owner for: the owner by `GetWindowThreadProcessId`, except a console
+  window, whose owner is its client and whose provider is its console
+  host: given the thread that raised an event on the window, a
+  `WinEvent`'s, which for a console window is the host's own, the
+  thread's process (`GetProcessIdOfThread`), the most direct evidence;
+  with no thread, the host read from the client (`console_host_of`,
+  private). The listener's `WinEvent` tells and its foreground report
+  (the event-named thread of a console in front) give a thread; every
+  other caller gives none. `None` for no
+  window and for a console whose host cannot be read, as for a client
+  that runs as another user, never the client nor 0. Every reader, the
+  shell and the tools call it: the listener's tells and its route of
+  Core's MSAA reads, its foreground report, the facets and `node_window`,
+  the outposts' node reads, the shell's ghost and desktop fronts, the
+  event recorder and the UIA walk's process-boundary step. `Owner`'s
+  process is private to this crate and `window_owner` is crate-private,
+  so no other crate can take a window's owning process for the one that
+  serves it; a window's thread is `window::window_thread`.
 - `window_facts` — the window facts a reader's tell carries for Core's
   acceptance, and a node's window, gathered with calls to Windows only:
-  `WindowReads`, the reads (class, owner, console host, parent, root, root
+  `WindowReads`, the reads (class, owner as an `Owner`, a console
+  client's console host, parent, root, root
   owner, `IsChild`, topmost, the desktop, the foreground, the foreground
   thread's active window and the hidden frame), with `SystemReads` making
   them, and `ReadOnce`, made for one event, reading each of a window's
   own facts at most once and the foreground, the active window and
   `IsChild` each time they are asked; `WindowPart`, the window's own part read as the event arrives,
   completed by the foreground's part (`WindowPart::with_foreground`) into
-  `AcceptanceFacts`, a console window's process the console host the
-  event's thread names; and `node_window`, the `NodeWindow` a node read
-  carries. The listener gathers its tells' facts with it, and an
+  `AcceptanceFacts`, each facet's process the serving process
+  (`Option<Pid>`, `None` when none can be read), the one the event's
+  tell already decided passed in with the event's thread so it is not
+  read twice, and a console window's thread the event's; and
+  `node_window`, the `NodeWindow` a node read carries, its process the
+  serving process as an `Option<Pid>` (Claude, 2026-11-27). The listener gathers its tells' facts with it, and an
   outpost's callback the facts of its followed node's window.
 - `integrity` — `process_integrity(pid)` and `own_integrity()`, a
   process's mandatory integrity level, which the listener reads for each

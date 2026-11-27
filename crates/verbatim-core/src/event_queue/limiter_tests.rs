@@ -23,7 +23,7 @@ const OUTPOST: Instance = Instance {
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(10),
     root_owner: WindowHandle(10),
-    process: APP,
+    process: Some(APP),
     thread: 0,
     by_class: None,
     ..Foreground::BLANK

@@ -3979,7 +3979,7 @@ impl Text {
             verbatim_model::request::ForegroundReport {
                 window: app.top_level(),
                 root_owner: app.top_level(),
-                process: app.pid,
+                process: Some(app.pid),
                 thread: 41,
                 class: "Frame".to_owned(),
                 ghost: None,
@@ -4107,7 +4107,7 @@ fn a_caret_event_in_a_hung_window_holding_attention_plays_the_sound() {
         verbatim_model::request::ForegroundReport {
             window: ONE.top_level(),
             root_owner: ONE.top_level(),
-            process: ONE.pid,
+            process: Some(ONE.pid),
             thread: 41,
             class: "Frame".to_owned(),
             ghost: None,

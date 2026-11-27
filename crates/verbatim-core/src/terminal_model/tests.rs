@@ -74,7 +74,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
     crate::terminal::reading::modelled_for_tests(&mut state, node, window);
     let binding = verbatim_model::request::CaretBinding {
         node,
-        window: window.node_window(),
+        window: window.served_window(),
         role: Role::Terminal,
         provider: verbatim_model::TextProvider::Uia,
         record: None,

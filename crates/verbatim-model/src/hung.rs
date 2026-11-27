@@ -76,7 +76,7 @@ mod tests {
         WindowFacet {
             handle: WindowHandle(window),
             class: "#32770".to_owned(),
-            process: VERBATIM,
+            process: Some(VERBATIM),
             thread,
         }
     }

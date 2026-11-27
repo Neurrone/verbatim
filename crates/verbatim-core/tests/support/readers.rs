@@ -16,7 +16,7 @@ use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, Proper
 use verbatim_model::request::{
     FocusRead, NodeRead, NodeWindow, Outcome, Refusal, Reply, RequestNumber,
 };
-use verbatim_model::{Pid, Role, WindowHandle};
+use verbatim_model::{Role, WindowHandle};
 
 /// What a reader found of the objects a batch names.
 #[derive(Clone, Debug)]
@@ -59,7 +59,7 @@ pub fn no_window() -> NodeWindow {
         handle: WindowHandle(0),
         top_level: WindowHandle(0),
         root_owner: WindowHandle(0),
-        process: Pid(0),
+        process: None,
         thread: 0,
         desktop: false,
     }

@@ -28,6 +28,7 @@ use verbatim_process::held::Target;
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::window::Readability;
 pub(super) use verbatim_win32::window_facts::SystemReads;
+use verbatim_win32::window_facts::{Raised, Served};
 use verbatim_win32::window_facts::{WindowPart, WindowReads, hung};
 
 use super::{Sent, Waiting, foreground_report, sent};
@@ -48,8 +49,6 @@ pub trait EventReads: WindowReads {
     /// The hung window `window` stands in for when it is a ghost
     /// ([`verbatim_win32::window::hung_window_from_ghost`]).
     fn stood_for(&self, window: isize) -> Option<isize>;
-    /// The process `thread` belongs to, `None` when it cannot be read.
-    fn process_of_thread(&self, thread: u32) -> Option<u32>;
     /// Whether this process can open the input desktop now
     /// ([`verbatim_win32::window::input_desktop_opens`]).
     fn input_desktop_opens(&self) -> bool;
@@ -66,10 +65,6 @@ impl EventReads for SystemReads {
 
     fn stood_for(&self, window: isize) -> Option<isize> {
         verbatim_win32::window::hung_window_from_ghost(window)
-    }
-
-    fn process_of_thread(&self, thread: u32) -> Option<u32> {
-        super::process_of_thread(thread)
     }
 
     fn input_desktop_opens(&self) -> bool {
@@ -386,7 +381,8 @@ pub trait Known {
     /// `answered`, the thread of an event's window read responsive.
     fn told(&self, process: Pid, answered: Option<u32>) -> String;
     /// The marks of the process `hung` names stepped with it: the report
-    /// to send, if its thread was not marked.
+    /// to send, if its thread was not marked; none for a window no process
+    /// is read as serving.
     fn hung(&self, hung: Hung) -> Option<Hung>;
     /// A foreground event: every mark of every application is cleared.
     fn foreground(&self);
@@ -399,8 +395,10 @@ impl Known for Mutex<Applications> {
     }
 
     fn hung(&self, hung: Hung) -> Option<Hung> {
+        // As the listener's checks take it: no process, no mark.
+        let process = hung.window.process?;
         let mut applications = self.lock().unwrap_or_else(PoisonError::into_inner);
-        applications.step(hung.window.process, WindowState::Hung(hung))
+        applications.step(process, WindowState::Hung(hung))
     }
 
     fn foreground(&self) {
@@ -541,16 +539,16 @@ fn tell_msaa(
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         seen(None)
     };
-    let (owner_thread, owner) = reads.owner(window);
-    let process = routed_process(&class, owner, || reads.process_of_thread(thread));
-    let Some(process) = process.map(Pid) else {
+    let owner = reads.owner(window);
+    let Some(process) = owner.serving_process(&class, reads, Some(Raised::Thread(thread))) else {
         return dropped("the process serving the window cannot be read");
     };
     if let Some(reason) = dropped_by_class(kind, &class, id_object) {
         return dropped(reason);
     }
-    let host = console.then_some((thread, process.0));
-    let answered = match hang_judged(kind, (window, host, owner_thread), at_us, reads) {
+    let served = Some(Served::Decided { thread, process });
+    let host = console.then_some((thread, process));
+    let answered = match hang_judged(kind, (window, host, owner.thread()), at_us, reads) {
         Judged::Untested => None,
         Judged::Answered(thread) => Some(thread),
         Judged::Hung(report) => {
@@ -579,7 +577,7 @@ fn tell_msaa(
         },
         cached: PropertyValues(Vec::new()),
         payload,
-        window: PendingWindow::Found(WindowPart::read(reads, window, host)),
+        window: PendingWindow::Found(WindowPart::read(reads, window, served)),
         checked: None,
     };
     seen(Some(Held::Tell(Box::new(tell))))
@@ -600,10 +598,11 @@ enum Judged {
 /// window, a ghost reported as the window it stands for, whose process
 /// holds attention where the ghost's, the desktop window manager's, does
 /// not; otherwise the thread the window was read responsive on, the
-/// console host's for a console window as its facets name it (`host`).
+/// console host's for a console window as its facets name it (`host`, the
+/// event's thread and the console host).
 fn hang_judged(
     kind: EventKind,
-    (window, host, owner_thread): (isize, Option<(u32, u32)>, u32),
+    (window, host, owner_thread): (isize, Option<(u32, Pid)>, u32),
     at_us: u64,
     reads: &impl EventReads,
 ) -> Judged {
@@ -615,25 +614,13 @@ fn hang_judged(
     }
     Judged::Hung(match reads.stood_for(window) {
         Some(stood_for) => hung(reads, stood_for, None, at_us),
-        None => hung(reads, window, host, at_us),
+        None => hung(
+            reads,
+            window,
+            host.map(|(thread, process)| Served::Decided { thread, process }),
+            at_us,
+        ),
     })
-}
-
-/// The process that serves a window of `class` whose owner is process
-/// `owner`, 0 for none: a console window is served by its console host,
-/// which `host` reads as the process of one of its threads, and so is a
-/// window whose owner cannot be read; any other window by its owner. A
-/// tell and Core's read of an MSAA object both route by it.
-pub(super) fn routed_process(
-    class: &str,
-    owner: u32,
-    host: impl FnOnce() -> Option<u32>,
-) -> Option<u32> {
-    if class == CONSOLE_WINDOW_CLASS || owner == 0 {
-        host()
-    } else {
-        Some(owner)
-    }
 }
 
 /// A fresh record of the applications, for a test.
@@ -660,6 +647,7 @@ mod tests {
     use super::*;
     use verbatim_ia2::WinEventKind;
     use verbatim_model::tell::WindowFacet;
+    use verbatim_win32::provider::serving_process;
 
     /// A message-only window of this thread's, of class `Static`, which no
     /// desktop shows and which is never in front: destroyed when dropped.
@@ -807,7 +795,7 @@ mod tests {
         };
         assert_eq!(facts.window.handle, WindowHandle::from(window.0));
         assert_eq!(facts.window.class, "Static");
-        assert_eq!(facts.window.process, Pid(std::process::id()));
+        assert_eq!(facts.window.process, Some(Pid(std::process::id())));
         assert_eq!(facts.window.thread, this_thread());
         assert!(!facts.desktop);
         assert!(!facts.hidden_frame);
@@ -1062,11 +1050,14 @@ mod tests {
         fn class(&self, window: isize) -> String {
             SystemReads.class(window)
         }
-        fn owner(&self, window: isize) -> (u32, u32) {
+        fn owner(&self, window: isize) -> verbatim_win32::window_facts::Owner {
             SystemReads.owner(window)
         }
-        fn console_host(&self, window: isize) -> Option<u32> {
-            SystemReads.console_host(window)
+        fn console_host(&self, client: u32) -> Option<u32> {
+            SystemReads.console_host(client)
+        }
+        fn process_of_thread(&self, thread: u32) -> Option<u32> {
+            SystemReads.process_of_thread(thread)
         }
         fn parent(&self, window: isize) -> isize {
             SystemReads.parent(window)
@@ -1107,9 +1098,6 @@ mod tests {
         fn stood_for(&self, window: isize) -> Option<isize> {
             self.ghost
                 .and_then(|(ghost, stands_for)| (ghost == window).then_some(stands_for))
-        }
-        fn process_of_thread(&self, thread: u32) -> Option<u32> {
-            SystemReads.process_of_thread(thread)
         }
         fn input_desktop_opens(&self) -> bool {
             SystemReads.input_desktop_opens()
@@ -1174,7 +1162,7 @@ mod tests {
         let facet = |handle: isize| WindowFacet {
             handle: WindowHandle::from(handle),
             class: "Static".to_owned(),
-            process: Pid(std::process::id()),
+            process: Some(Pid(std::process::id())),
             thread: this_thread(),
         };
         let message_only = WindowHandle::from(SystemReads.root(window.0));
@@ -1185,14 +1173,14 @@ mod tests {
                 root: WindowFacet {
                     handle: message_only,
                     class: SystemReads.class(SystemReads.root(window.0)),
-                    process: Pid(SystemReads.owner(SystemReads.root(window.0)).1),
-                    thread: SystemReads.owner(SystemReads.root(window.0)).0,
+                    process: serving_process(&SystemReads, SystemReads.root(window.0), None),
+                    thread: SystemReads.owner(SystemReads.root(window.0)).thread(),
                 },
                 root_owner: WindowFacet {
                     handle: WindowHandle::from(SystemReads.root_owner(window.0)),
                     class: SystemReads.class(SystemReads.root_owner(window.0)),
-                    process: Pid(SystemReads.owner(SystemReads.root_owner(window.0)).1),
-                    thread: SystemReads.owner(SystemReads.root_owner(window.0)).0,
+                    process: serving_process(&SystemReads, SystemReads.root_owner(window.0), None),
+                    thread: SystemReads.owner(SystemReads.root_owner(window.0)).thread(),
                 },
                 at_us: 2,
             }))
@@ -1268,7 +1256,7 @@ mod tests {
             let facet = WindowFacet {
                 handle: WindowHandle(7),
                 class: "Static".to_owned(),
-                process,
+                process: Some(process),
                 thread: 9,
             };
             WindowState::Hung(Hung {

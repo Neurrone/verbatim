@@ -284,7 +284,7 @@ fn foreground(
         window: WindowHandle(window),
         ghost: None,
         root_owner: WindowHandle(window),
-        process: app.pid,
+        process: Some(app.pid),
         thread,
         class: "Frame".to_owned(),
         console,
@@ -402,7 +402,7 @@ fn bring_forward(desk: &mut Desk, app: App) -> Vec<Heard> {
     desk.step(QueueInput::Foreground(ForegroundReport {
         window: app.top_level(),
         root_owner: app.top_level(),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,

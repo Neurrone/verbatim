@@ -427,7 +427,12 @@ fn tip_window(app: &common::MockApp, name: &str) -> HWND {
             )
         }
         .expect("mockapp made the tooltip window");
-        if verbatim_win32::window::window_owner(found.0 as isize).1 == app.pid() {
+        if verbatim_win32::provider::serving_process(
+            &verbatim_win32::window_facts::SystemReads,
+            found.0 as isize,
+            None,
+        ) == Some(verbatim_model::Pid(app.pid()))
+        {
             return found;
         }
         after = Some(found);

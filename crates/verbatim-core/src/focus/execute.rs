@@ -165,8 +165,9 @@ pub(crate) struct Origin {
     pub(crate) window: Option<WindowFacts>,
     /// Whether it is a foreground tell's.
     pub(crate) whole_window: bool,
-    /// The process of the focus's top-level window.
-    pub(crate) top_process: Pid,
+    /// The process serving the focus's top-level window, `None` when none
+    /// could be read.
+    pub(crate) top_process: Option<Pid>,
     /// The window its read named.
     pub(crate) asked: RequestWindow,
     /// Whether the tell's window is owned by Verbatim's hidden frame, whose
@@ -193,7 +194,7 @@ impl Origin {
             observed_at_us: tell.at_us,
             window: facts.map(|facts| window_of(tell, facts)),
             whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
-            top_process: facts.map_or(asked.process, |facts| facts.root.process),
+            top_process: facts.map_or(Some(asked.process), |facts| facts.root.process),
             asked,
             frame_owned: facts.is_some_and(|facts| facts.hidden_frame_owned),
             parent_automation_id: match tell
@@ -217,7 +218,7 @@ impl Origin {
             observed_at_us: 0,
             window: None,
             whole_window: false,
-            top_process: asked.process,
+            top_process: Some(asked.process),
             asked,
             frame_owned: false,
             parent_automation_id: None,
@@ -390,7 +391,9 @@ fn focus_text(caret: &FocusCaret) -> FocusText {
 /// window is an ignored process's (Verbatim-only: the test harness's
 /// rule).
 fn ignored(state: &SrState, origin: &Origin) -> bool {
-    state.ignored.contains(&origin.top_process)
+    origin
+        .top_process
+        .is_some_and(|process| state.ignored.contains(&process))
 }
 
 /// Executes the focus `read` answered for `origin`, asked with `known`:

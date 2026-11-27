@@ -358,9 +358,11 @@ pub enum ListenerToCore {
         window: isize,
         /// The top of its owner chain (`GetAncestor` with `GA_ROOTOWNER`).
         root_owner: isize,
-        /// The process its facts go to: its owner, or for a console window
-        /// whose thread an event named, the console host.
-        process: u32,
+        /// The process serving it, its owner or for a console window its
+        /// console host (`verbatim_win32::provider::serving_process`);
+        /// `None` when none can be read, as for a window gone or a console
+        /// whose client runs as another user (Claude, 2026-11-27).
+        process: Option<crate::Pid>,
         /// When the listener's callback observed the event that sent it,
         /// in microseconds on the run's shared clock.
         observed_at_us: u64,

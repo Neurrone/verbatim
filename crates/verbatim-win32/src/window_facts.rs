@@ -24,11 +24,16 @@ pub trait WindowReads {
     /// The window's class name, empty for no window.
     fn class(&self, window: isize) -> String;
     /// The thread and process that own the window by
-    /// `GetWindowThreadProcessId`, zeros for no window.
-    fn owner(&self, window: isize) -> (u32, u32);
-    /// The process that serves a console window, its console host, `None`
-    /// when it cannot be read.
-    fn console_host(&self, window: isize) -> Option<u32>;
+    /// `GetWindowThreadProcessId`, zeros for no window: the process only
+    /// [`Owner::serving_process`] reads.
+    fn owner(&self, window: isize) -> Owner;
+    /// The console host of the console client `client`, the process that
+    /// serves its console window, `None` when it cannot be read, as for a
+    /// client that runs as another user.
+    fn console_host(&self, client: u32) -> Option<u32>;
+    /// The process `thread` belongs to (`GetProcessIdOfThread`), `None`
+    /// when the thread cannot be opened.
+    fn process_of_thread(&self, thread: u32) -> Option<u32>;
     /// `GetAncestor` with `GA_PARENT`.
     fn parent(&self, window: isize) -> isize;
     /// `GetAncestor` with `GA_ROOT`.
@@ -49,6 +54,125 @@ pub trait WindowReads {
     fn hidden_frame(&self, window: isize) -> bool;
 }
 
+/// A window's owner by `GetWindowThreadProcessId`: its thread, and its
+/// process, which for a console window is the console's client and not the
+/// process that serves the window, so it is read only by the one rule of
+/// the process that serves a window ([`Owner::serving_process`]), and
+/// nothing outside this crate can take it for that process.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Owner {
+    thread: u32,
+    process: u32,
+}
+
+impl Owner {
+    /// The owner by thread `thread` and process `process`, as
+    /// `GetWindowThreadProcessId` answers them, zeros for no window.
+    #[must_use]
+    pub const fn new(thread: u32, process: u32) -> Self {
+        Self { thread, process }
+    }
+
+    /// The thread that owns the window, 0 for no window.
+    #[must_use]
+    pub const fn thread(self) -> u32 {
+        self.thread
+    }
+
+    /// The process that serves the UI Automation of a window of class
+    /// `class` this owns: the owner, except a console window, whose owner
+    /// is its client and whose provider its console host: by `raised_by`,
+    /// the caller's event on the window, the most direct evidence, when it
+    /// has one ([`Raised`]); and only with none, the host read from the
+    /// client through `reads`
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`,
+    /// section 4.3). `None` for no window, and for a console window whose
+    /// host cannot be read, so that no outpost takes the window as its
+    /// application's: never the client's, which would then connect into the
+    /// console host. The one rule of the process serving a window, which
+    /// every reader and the shell decide it by
+    /// ([`crate::provider::serving_process`]).
+    #[must_use]
+    pub fn serving_process(
+        self,
+        class: &str,
+        reads: &impl WindowReads,
+        raised_by: Option<Raised>,
+    ) -> Option<Pid> {
+        match self.serving(class, reads, raised_by)? {
+            Serving::Process(process) => Some(Pid(process)),
+            Serving::UnreadConsole => None,
+        }
+    }
+
+    /// [`Owner::serving_process`], with a console window whose host cannot
+    /// be read told apart from no window.
+    pub(crate) fn serving(
+        self,
+        class: &str,
+        reads: &impl WindowReads,
+        raised_by: Option<Raised>,
+    ) -> Option<Serving> {
+        if self.thread == 0 {
+            return None;
+        }
+        if class != CONSOLE_WINDOW_CLASS {
+            return Some(Serving::Process(self.process));
+        }
+        let host = match raised_by {
+            Some(Raised::Thread(thread)) => reads.process_of_thread(thread),
+            Some(Raised::Provider(process)) => Some(process.0),
+            None => reads.console_host(self.process),
+        };
+        Some(host.map_or(Serving::UnreadConsole, Serving::Process))
+    }
+
+    /// The process that owns the window, for this crate's questions that
+    /// are not which process serves it, such as whether the window is
+    /// Verbatim's own.
+    pub(crate) const fn process(self) -> u32 {
+        self.process
+    }
+}
+
+/// An event raised on a window, the most direct evidence of the process
+/// serving it that a caller can give [`Owner::serving_process`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Raised {
+    /// The thread that raised a `WinEvent` on it, which for a console
+    /// window is its console host's own: the host is that thread's process.
+    Thread(u32),
+    /// The process UI Automation names as providing the event's sender,
+    /// which for a console window is its console host.
+    Provider(Pid),
+}
+
+/// What a tell's reader knows of the process serving the window it reads
+/// the facts of ([`WindowPart::read`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// The tell already decided it, with the thread that raised its event,
+    /// so that it is not read twice.
+    Decided {
+        /// The thread that raised the event, a console host's own for a
+        /// console window.
+        thread: u32,
+        /// The process serving the window.
+        process: Pid,
+    },
+    /// The event raised on it, from which the rule decides it.
+    Raised(Raised),
+}
+
+/// The process serving a window, as far as it can be read.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Serving {
+    /// The process that serves the window's UIA.
+    Process(u32),
+    /// A console window whose console host cannot be read from its client.
+    UnreadConsole,
+}
+
 /// The class of a popup menu's window.
 const MENU_CLASS: &str = "#32768";
 
@@ -61,7 +185,9 @@ fn frame_menu(reads: &impl WindowReads, window: isize) -> bool {
         return false;
     }
     let front = reads.foreground();
-    front != 0 && reads.hidden_frame(front) && reads.owner(front).0 == reads.owner(window).0
+    front != 0
+        && reads.hidden_frame(front)
+        && reads.owner(front).thread() == reads.owner(window).thread()
 }
 
 /// The part of a tell window's facts that depends on the window alone,
@@ -86,56 +212,61 @@ pub struct WindowPart {
     hidden_frame_owned: bool,
 }
 
-/// `window` as acceptance reads it: a console window's process is its
-/// console host, `host` when the event's own thread named it, and its
-/// thread the event's; any other window's, its owner's.
-fn facet(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> WindowFacet {
+/// `window` as acceptance reads it: its process the one that serves it,
+/// as `served` decided it or from the event it names ([`WindowPart::read`]),
+/// and a console window's thread the event's when `served` decided it;
+/// any other window's thread its owner's.
+fn facet(reads: &impl WindowReads, window: isize, served: Option<Served>) -> WindowFacet {
     let class = reads.class(window);
-    let (thread, owner) = reads.owner(window);
-    let (thread, process) = if class == CONSOLE_WINDOW_CLASS {
-        match host {
-            Some((thread, process)) => (thread, process),
-            None => (thread, reads.console_host(window).unwrap_or(0)),
+    let owner = reads.owner(window);
+    let (thread, process) = match served {
+        Some(Served::Decided { thread, process }) if class == CONSOLE_WINDOW_CLASS => {
+            (thread, Some(process))
         }
-    } else {
-        (thread, owner)
+        Some(Served::Decided { process, .. }) => (owner.thread(), Some(process)),
+        Some(Served::Raised(raised)) => (
+            owner.thread(),
+            owner.serving_process(&class, reads, Some(raised)),
+        ),
+        None => (owner.thread(), owner.serving_process(&class, reads, None)),
     };
     WindowFacet {
         handle: WindowHandle::from(window),
         class,
-        process: Pid(process),
+        process,
         thread,
     }
 }
 
 /// The facts of `window` that a node read in it carries, by which a
 /// request on the node names it (`verbatim_model::request::NodeWindow`):
-/// read now, with calls to Windows only.
+/// read now, with calls to Windows only, its process the one that serves
+/// it ([`Owner::serving_process`]).
 #[must_use]
 pub fn node_window(reads: &impl WindowReads, window: isize) -> NodeWindow {
-    let (thread, process) = reads.owner(window);
+    let owner = reads.owner(window);
     NodeWindow {
         handle: WindowHandle::from(window),
         top_level: WindowHandle::from(reads.root(window)),
         root_owner: WindowHandle::from(reads.root_owner(window)),
-        process: Pid(process),
-        thread,
+        process: owner.serving_process(&reads.class(window), reads, None),
+        thread: owner.thread(),
         desktop: window == reads.desktop(),
     }
 }
 
 /// The report of `window`, found hung by an event observed at `at_us`:
 /// its facets, its top-level window's and its root owner's, read now with
-/// calls to Windows only. `host` is as for [`WindowPart::read`].
+/// calls to Windows only. `served` is as for [`WindowPart::read`].
 #[must_use]
-pub fn hung(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>, at_us: u64) -> Hung {
+pub fn hung(reads: &impl WindowReads, window: isize, served: Option<Served>, at_us: u64) -> Hung {
     let root = reads.root(window);
     let root_owner = reads.root_owner(window);
-    let host_of = |handle: isize| (handle == window).then_some(host).flatten();
+    let served_of = |handle: isize| (handle == window).then_some(served).flatten();
     Hung {
-        window: facet(reads, window, host),
-        root: facet(reads, root, host_of(root)),
-        root_owner: facet(reads, root_owner, host_of(root_owner)),
+        window: facet(reads, window, served),
+        root: facet(reads, root, served_of(root)),
+        root_owner: facet(reads, root_owner, served_of(root_owner)),
         at_us,
     }
 }
@@ -148,24 +279,26 @@ impl WindowPart {
         &self.window
     }
 
-    /// The facts of `window` that depend on it alone, read now. `host` is
-    /// the thread that raised the event and its process, which for a
-    /// console window name its console host.
+    /// The facts of `window` that depend on it alone, read now. `served`
+    /// is the thread that raised the event and the process its tell
+    /// decided serves `window` ([`Owner::serving_process`]), so that it is
+    /// not read twice; for a console window that thread is its console
+    /// host's.
     #[must_use]
-    pub fn read(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> Self {
+    pub fn read(reads: &impl WindowReads, window: isize, served: Option<Served>) -> Self {
         let root = reads.root(window);
         let root_owner = reads.root_owner(window);
         let hidden_frame = reads.hidden_frame(window);
-        let host_of = |handle: isize| (handle == window).then_some(host).flatten();
+        let served_of = |handle: isize| (handle == window).then_some(served).flatten();
         Self {
             handles: (window, root_owner),
-            window: facet(reads, window, host),
+            window: facet(reads, window, served),
             parent_class: match reads.parent(window) {
                 0 => String::new(),
                 parent => reads.class(parent),
             },
-            root: facet(reads, root, host_of(root)),
-            root_owner: facet(reads, root_owner, host_of(root_owner)),
+            root: facet(reads, root, served_of(root)),
+            root_owner: facet(reads, root_owner, served_of(root_owner)),
             window_topmost: reads.topmost(window),
             root_topmost: reads.topmost(root),
             desktop: window == reads.desktop(),
@@ -242,7 +375,7 @@ pub struct ReadOnce<'r, R> {
 #[derive(Default)]
 struct Known {
     class: Option<String>,
-    owner: Option<(u32, u32)>,
+    owner: Option<Owner>,
     parent: Option<isize>,
     root: Option<isize>,
     root_owner: Option<isize>,
@@ -300,7 +433,7 @@ impl<R: WindowReads> WindowReads for ReadOnce<'_, R> {
         )
     }
 
-    fn owner(&self, window: isize) -> (u32, u32) {
+    fn owner(&self, window: isize) -> Owner {
         self.known(
             window,
             |known| &mut known.owner,
@@ -308,10 +441,14 @@ impl<R: WindowReads> WindowReads for ReadOnce<'_, R> {
         )
     }
 
-    fn console_host(&self, window: isize) -> Option<u32> {
-        // Read each time it is asked: only for a console window whose event
-        // named no host, which the listener's never is.
-        self.reads.console_host(window)
+    fn console_host(&self, client: u32) -> Option<u32> {
+        // Read each time it is asked: only for a console window whose tell
+        // has not already decided the process that serves it.
+        self.reads.console_host(client)
+    }
+
+    fn process_of_thread(&self, thread: u32) -> Option<u32> {
+        self.reads.process_of_thread(thread)
     }
 
     fn parent(&self, window: isize) -> isize {
@@ -380,12 +517,16 @@ impl WindowReads for SystemReads {
         window_class_name(window)
     }
 
-    fn owner(&self, window: isize) -> (u32, u32) {
+    fn owner(&self, window: isize) -> Owner {
         crate::window::window_owner(window)
     }
 
-    fn console_host(&self, window: isize) -> Option<u32> {
-        crate::provider::provider_process(window)
+    fn console_host(&self, client: u32) -> Option<u32> {
+        crate::provider::console_host_of(client)
+    }
+
+    fn process_of_thread(&self, thread: u32) -> Option<u32> {
+        crate::provider::process_of_thread(thread)
     }
 
     fn parent(&self, window: isize) -> isize {
@@ -441,6 +582,9 @@ mod tests {
         foreground: isize,
         active: isize,
         frame: isize,
+        /// Whether a console's host cannot be read from its client, as
+        /// for a client that runs as another user.
+        hosts_unread: bool,
     }
 
     #[derive(Clone)]
@@ -478,12 +622,17 @@ mod tests {
             self.made(window)
                 .map_or_else(String::new, |made| made.class.to_owned())
         }
-        fn owner(&self, window: isize) -> (u32, u32) {
-            self.made(window)
-                .map_or((0, 0), |made| (made.thread, made.process))
+        fn owner(&self, window: isize) -> Owner {
+            self.made(window).map_or(Owner::default(), |made| {
+                Owner::new(made.thread, made.process)
+            })
         }
-        fn console_host(&self, _window: isize) -> Option<u32> {
-            Some(300)
+        fn console_host(&self, client: u32) -> Option<u32> {
+            assert_eq!(client, 200, "a console's host is read from its client");
+            (!self.hosts_unread).then_some(300)
+        }
+        fn process_of_thread(&self, thread: u32) -> Option<u32> {
+            (thread == 77).then_some(400)
         }
         fn parent(&self, window: isize) -> isize {
             self.made(window).map_or(0, |made| made.parent)
@@ -621,11 +770,125 @@ mod tests {
     fn a_console_windows_process_is_its_host_named_by_the_events_thread() {
         let mut desk = Desk::default();
         desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
-        let told = WindowPart::read(&desk, 9, Some((77, 400))).with_foreground(&desk);
-        assert_eq!((told.window.thread, told.window.process), (77, Pid(400)));
-        assert_eq!(told.root.process, Pid(400));
+        let told = WindowPart::read(
+            &desk,
+            9,
+            Some(Served::Decided {
+                thread: 77,
+                process: Pid(400),
+            }),
+        )
+        .with_foreground(&desk);
+        assert_eq!(
+            (told.window.thread, told.window.process),
+            (77, Some(Pid(400)))
+        );
+        assert_eq!(told.root.process, Some(Pid(400)));
         let unnamed = WindowPart::read(&desk, 9, None).with_foreground(&desk);
-        assert_eq!(unnamed.window.process, Pid(300));
+        assert_eq!(unnamed.window.process, Some(Pid(300)));
+    }
+
+    /// The one rule: a console window is served by its console host, read
+    /// from its client, and any other window by its owner; a console
+    /// window whose host cannot be read is served by no process, as is no
+    /// window.
+    #[test]
+    fn a_console_window_whose_host_cannot_be_read_has_no_provider_process() {
+        let mut desk = Desk::default();
+        desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
+        desk.add(1, "Notepad", DESKTOP, 0);
+        assert_eq!(
+            crate::provider::serving_process(&desk, 9, None),
+            Some(Pid(300))
+        );
+        assert_eq!(
+            crate::provider::serving_process(&desk, 1, None),
+            Some(Pid(200))
+        );
+        assert_eq!(crate::provider::serving_process(&desk, 4, None), None);
+        desk.hosts_unread = true;
+        assert_eq!(crate::provider::serving_process(&desk, 9, None), None);
+        assert_eq!(
+            Owner::new(100, 200).serving(CONSOLE_WINDOW_CLASS, &desk, None),
+            Some(Serving::UnreadConsole)
+        );
+        assert_eq!(
+            crate::provider::serving_process(&desk, 1, None),
+            Some(Pid(200))
+        );
+    }
+
+    /// The most direct evidence first: a console window's event names the
+    /// console host's own thread, whose process is the host, read with no
+    /// look at the client, so a host that cannot be read through its
+    /// client, as when the client is elevated, is still found; with no
+    /// thread given the client route is taken. A thread given for any
+    /// other window is not read: its owner serves it.
+    #[test]
+    fn a_console_windows_host_is_its_events_threads_process_first() {
+        let mut desk = Desk::default();
+        desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
+        desk.add(1, "Notepad", DESKTOP, 0);
+        desk.hosts_unread = true;
+        let thread = |thread| Some(Raised::Thread(thread));
+        assert_eq!(
+            crate::provider::serving_process(&desk, 9, thread(77)),
+            Some(Pid(400))
+        );
+        assert_eq!(crate::provider::serving_process(&desk, 9, None), None);
+        assert_eq!(crate::provider::serving_process(&desk, 9, thread(78)), None);
+        assert_eq!(
+            crate::provider::serving_process(&desk, 1, thread(77)),
+            Some(Pid(200))
+        );
+        // A UI Automation event's sender names its provider, the console
+        // host, for its console window, so the tell's facets name the
+        // process the tell does.
+        let provider = Some(Raised::Provider(Pid(500)));
+        assert_eq!(
+            crate::provider::serving_process(&desk, 9, provider),
+            Some(Pid(500))
+        );
+        assert_eq!(
+            crate::provider::serving_process(&desk, 1, provider),
+            Some(Pid(200))
+        );
+        let facts = WindowPart::read(&desk, 9, Some(Served::Raised(Raised::Provider(Pid(500)))))
+            .with_foreground(&desk);
+        assert_eq!(facts.window.process, Some(Pid(500)));
+    }
+
+    /// A console window whose host cannot be read, told with no event's
+    /// thread to name it, as a UIA tell's window or a node read's is,
+    /// names no process, not 0: neither its tell's facets nor a node read
+    /// in it pass a stand-in on (second 23 of the audit).
+    #[test]
+    fn a_window_whose_host_cannot_be_read_names_no_process() {
+        let mut desk = Desk::default();
+        desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
+        desk.hosts_unread = true;
+        let facts = WindowPart::read(&desk, 9, None).with_foreground(&desk);
+        assert_eq!(
+            (
+                facts.window.process,
+                facts.root.process,
+                facts.root_owner.process
+            ),
+            (None, None, None)
+        );
+        assert_eq!(hung(&desk, 9, None, 0).window.process, None);
+        assert_eq!(node_window(&desk, 9).process, None);
+    }
+
+    /// A node read in a console window names the console host, read from
+    /// its client, as the process its requests go to, with the thread
+    /// Windows names as the window's owner (second 2 of the audit).
+    #[test]
+    fn a_console_nodes_window_names_its_console_host_not_its_client() {
+        let mut desk = Desk::default();
+        desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
+        let window = node_window(&desk, 9);
+        assert_eq!((window.process, window.thread), (Some(Pid(300)), 100));
     }
 
     /// A node's window carries its top-level window, its root owner, its
@@ -643,7 +906,7 @@ mod tests {
                 handle: WindowHandle(2),
                 top_level: WindowHandle(1),
                 root_owner: WindowHandle(1),
-                process: Pid(200),
+                process: Some(Pid(200)),
                 thread: 100,
                 desktop: false,
             }
@@ -669,11 +932,14 @@ mod tests {
         fn class(&self, window: isize) -> String {
             self.count("class", self.desk.class(window))
         }
-        fn owner(&self, window: isize) -> (u32, u32) {
+        fn owner(&self, window: isize) -> Owner {
             self.count("owner", self.desk.owner(window))
         }
-        fn console_host(&self, window: isize) -> Option<u32> {
-            self.count("console_host", self.desk.console_host(window))
+        fn console_host(&self, client: u32) -> Option<u32> {
+            self.count("console_host", self.desk.console_host(client))
+        }
+        fn process_of_thread(&self, thread: u32) -> Option<u32> {
+            self.count("process_of_thread", self.desk.process_of_thread(thread))
         }
         fn parent(&self, window: isize) -> isize {
             self.count("parent", self.desk.parent(window))
@@ -724,7 +990,7 @@ mod tests {
         let once = ReadOnce::new(&counting).with_class(1, "MockApp".to_owned());
         let facts = WindowPart::read(&once, 1, None).with_foreground(&once);
         assert_eq!(once.class(1), "MockApp");
-        assert_eq!(once.owner(1), (100, 200));
+        assert_eq!(once.owner(1), Owner::new(100, 200));
         assert_eq!(
             facts,
             WindowPart::read(&desk, 1, None).with_foreground(&desk)

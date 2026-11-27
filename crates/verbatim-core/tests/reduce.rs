@@ -99,7 +99,7 @@ fn foreground(desk: &mut Desk, app: App) -> Vec<Heard> {
     desk.step(QueueInput::Foreground(ForegroundReport {
         window: app.top_level(),
         root_owner: app.top_level(),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,
@@ -953,7 +953,7 @@ fn a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus() {
     let _ = desk.step(QueueInput::Foreground(ForegroundReport {
         window: TWO.top_level(),
         root_owner: ONE.top_level(),
-        process: TWO.pid,
+        process: Some(TWO.pid),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,

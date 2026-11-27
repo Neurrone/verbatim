@@ -54,7 +54,7 @@ use super::tells::{Applications, Held, Known, Pending, PendingWindow, SystemRead
 use crate::reading::{IdleWaiter, Readers};
 use verbatim_model::hung::WindowState;
 use verbatim_model::tell::Hung;
-use verbatim_win32::window_facts::{WindowPart, WindowReads};
+use verbatim_win32::window_facts::{Raised, Served, WindowPart, WindowReads};
 
 /// The UI Automation class of the Office menu item NVDA's
 /// `PlaceholderNetUITWMenuItem` is made of (`NVDAObjects/UIA/__init__.py`
@@ -342,9 +342,12 @@ impl Known for Checks {
     }
 
     fn hung(&self, hung: Hung) -> Option<Hung> {
+        // A window no process is read as serving marks no application, and
+        // Core watches no such window.
+        let process = hung.window.process?;
         self.lock()
             .applications
-            .step(hung.window.process, WindowState::Hung(hung))
+            .step(process, WindowState::Hung(hung))
     }
 
     fn foreground(&self) {
@@ -675,6 +678,10 @@ struct SenderCalls<'a, R> {
     observe: &'a mut dyn FnMut(Call),
     /// The acceptance facts, read where NVDA judges acceptance.
     accepted: Option<AcceptanceFacts>,
+    /// The event's window's serving process as the event's sender names
+    /// it, its provider: for a console window its console host, so the
+    /// facts name the process the tell does.
+    served: Served,
 }
 
 impl<R: WindowReads> CheckCalls for SenderCalls<'_, R> {
@@ -695,7 +702,7 @@ impl<R: WindowReads> CheckCalls for SenderCalls<'_, R> {
 
     fn probe(&mut self, window: isize) -> Probe {
         let began_us = (self.now)();
-        let (thread, _) = verbatim_win32::window::window_owner(window);
+        let thread = verbatim_win32::window::window_thread(window);
         Probe {
             window: WindowHandle::from(window),
             thread,
@@ -705,8 +712,9 @@ impl<R: WindowReads> CheckCalls for SenderCalls<'_, R> {
     }
 
     fn acceptance(&mut self, window: isize) {
-        self.accepted =
-            Some(WindowPart::read(self.reads, window, None).with_foreground(self.reads));
+        self.accepted = Some(
+            WindowPart::read(self.reads, window, Some(self.served)).with_foreground(self.reads),
+        );
     }
 
     fn kept_focus(&mut self, token: ElementToken) -> Read<bool> {
@@ -781,6 +789,7 @@ pub fn check_event(
         now,
         observe,
         accepted: None,
+        served: Served::Raised(Raised::Provider(event.process)),
     };
     let found = verbatim_listener_logic::check::check(&facts, (record, now()), &mut calls);
     let window = match found.walked {
@@ -791,11 +800,13 @@ pub fn check_event(
     Told {
         window: match (window, found.walked, calls.accepted) {
             (Some(_), _, Some(facts)) => PendingWindow::Whole(Box::new(facts)),
-            (Some(window), _, None) => PendingWindow::Found(WindowPart::read(reads, window, None)),
+            (Some(window), _, None) => {
+                PendingWindow::Found(WindowPart::read(reads, window, Some(calls.served)))
+            }
             (None, Walked::Failed, _) => PendingWindow::Failed,
             (None, _, _) => PendingWindow::NoWindow,
         },
-        thread: window.map_or(0, |window| verbatim_win32::window::window_owner(window).0),
+        thread: window.map_or(0, verbatim_win32::window::window_thread),
         checked: found.checked,
         parent: found.parent,
     }

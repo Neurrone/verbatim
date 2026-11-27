@@ -461,7 +461,7 @@ fn backspace_whose_confirmation_the_foreground_stops_says_nothing() {
         Input::Foreground(Foreground {
             window: WindowHandle(70),
             root_owner: WindowHandle(70),
-            process: verbatim_model::Pid(41),
+            process: Some(verbatim_model::Pid(41)),
             thread: 0,
             by_class: None,
             ..Foreground::BLANK
@@ -513,7 +513,7 @@ fn the_foreground_leaving_the_candidates_window_stops_the_confirmation() {
         Input::Foreground(Foreground {
             window: WindowHandle(70),
             root_owner: WindowHandle(70),
-            process: verbatim_model::Pid(41),
+            process: Some(verbatim_model::Pid(41)),
             thread: 0,
             by_class: None,
             ..Foreground::BLANK

@@ -49,7 +49,7 @@ const TITLE: &str = "Label(\"Editor\") Role(Window)";
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: crate::entries::tests::APP,
+    process: Some(crate::entries::tests::APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -654,7 +654,7 @@ fn an_unrelated_foreground_empties_the_last_focus_and_its_fence() {
         crate::event_queue::Input::Foreground(crate::event_queue::Foreground {
             window: WindowHandle(90),
             root_owner: WindowHandle(90),
-            process: Pid(41),
+            process: Some(Pid(41)),
             thread: 42,
             by_class: None,
             ..crate::event_queue::Foreground::BLANK
@@ -794,7 +794,7 @@ fn a_run_spanning_two_applications_is_tried_strictly_newest_first() {
     second.at_us = 1_200;
     second.process = OTHER;
     if let TellWindow::Found(facts) = &mut second.window {
-        facts.window.process = OTHER;
+        facts.window.process = Some(OTHER);
     }
     feed_at(&mut held, 1_200, entry(second));
     let mut third = msaa_tell(-7);
@@ -841,7 +841,7 @@ fn a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing() {
     };
     if let TellWindow::Found(facts) = &mut tell.window {
         facts.desktop = true;
-        facts.window.process = csrss;
+        facts.window.process = Some(csrss);
         facts.window.class = "#32769".to_owned();
     }
     let effects = crate::entries::feed(

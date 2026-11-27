@@ -1163,14 +1163,14 @@ impl ReducerThread<'_> {
         &mut self,
         window: isize,
         root_owner: isize,
-        process: u32,
+        process: Option<Pid>,
         thread: u32,
         console: bool,
         integrity: Option<u32>,
     ) {
         // At info, with the starts it may decide, to time an outpost's
         // start from what asked for it.
-        tracing::info!(process, "the listener's foreground report reached Core");
+        tracing::info!(?process, "the listener's foreground report reached Core");
         let in_front = WindowHandle(u64::from_ne_bytes(window.to_ne_bytes()));
         let own_integrity = verbatim_win32::integrity::own_integrity();
         // A ghost window in front stands in for a hung window of another
@@ -1179,30 +1179,42 @@ impl ReducerThread<'_> {
         // hung and the hung window, not the ghost, joins the recovery set;
         // the keyboard hook's view keeps the ghost, the window in front.
         let judged = hang_check::judged(in_front);
-        let report = if judged == in_front {
-            ForegroundReport {
-                window: in_front,
-                ghost: None,
-                root_owner: WindowHandle(u64::from_ne_bytes(root_owner.to_ne_bytes())),
-                process: Pid(process),
-                thread,
-                class: verbatim_win32::window::window_class_name(window),
-                console,
-                integrity,
-                own_integrity,
-            }
-        } else {
-            let handle = window_handle(judged);
-            let (thread, process) = verbatim_win32::window::window_owner(handle);
+        // The hung window a ghost stands for, with the process serving it,
+        // a console window's console host; a ghost whose hung window no
+        // process is read as serving is reported as itself.
+        let stood_for = (judged != in_front)
+            .then(|| {
+                let handle = window_handle(judged);
+                verbatim_win32::provider::serving_process(
+                    &verbatim_win32::window_facts::SystemReads,
+                    handle,
+                    None,
+                )
+                .map(|process| (handle, process))
+            })
+            .flatten();
+        let report = if let Some((handle, process)) = stood_for {
             ForegroundReport {
                 window: judged,
                 ghost: Some(in_front),
                 root_owner: WindowHandle(u64::from_ne_bytes(
                     verbatim_win32::window::root_owner_of(handle).to_ne_bytes(),
                 )),
-                process: Pid(process),
-                thread,
+                process: Some(process),
+                thread: verbatim_win32::window::window_thread(handle),
                 class: verbatim_win32::window::window_class_name(handle),
+                console,
+                integrity,
+                own_integrity,
+            }
+        } else {
+            ForegroundReport {
+                window: in_front,
+                ghost: None,
+                root_owner: WindowHandle(u64::from_ne_bytes(root_owner.to_ne_bytes())),
+                process,
+                thread,
+                class: verbatim_win32::window::window_class_name(window),
                 console,
                 integrity,
                 own_integrity,
@@ -2398,7 +2410,7 @@ mod tests {
         let facet = verbatim_model::tell::WindowFacet {
             handle: WindowHandle(7),
             class: "#32770".to_owned(),
-            process: Pid(9),
+            process: Some(Pid(9)),
             thread: 4,
         };
         let hung = verbatim_model::tell::Hung {

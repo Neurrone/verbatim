@@ -73,7 +73,7 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
     };
     Some(CaretBinding {
         node,
-        window: focus.kept.asked.node_window(),
+        window: focus.kept.asked.served_window(),
         role,
         provider: crate::text_facts::provider(&focus.kept),
         record,
@@ -83,7 +83,7 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
 
 /// The window a caret key's batches name, its bound node's.
 fn window_of(binding: &CaretBinding) -> RequestWindow {
-    RequestWindow::of_node(&binding.window)
+    RequestWindow::of_served(&binding.window)
 }
 
 /// What a caret key's starting batch read before the key: the caret, the

@@ -163,7 +163,7 @@ impl Seam {
             QueueInput::Foreground(ForegroundReport {
                 window: WindowHandle(4),
                 root_owner: WindowHandle(4),
-                process: APP,
+                process: Some(APP),
                 thread: 41,
                 class: "Frame".to_owned(),
                 ghost: None,
@@ -224,7 +224,7 @@ impl Seam {
                 }),
                 Some(Box::new(CaretBinding {
                     node: node(FIELD),
-                    window: window(5),
+                    window: served(5),
                     role: Role::EditableText,
                     provider: match self.kind {
                         Kind::Notepad => TextProvider::Uia,
@@ -936,9 +936,20 @@ fn window(handle: u64) -> NodeWindow {
         handle: WindowHandle(handle),
         top_level: WindowHandle(4),
         root_owner: WindowHandle(4),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         desktop: false,
+    }
+}
+
+/// [`window`] as a caret key's binding names it.
+fn served(handle: u64) -> verbatim_model::request::ServedWindow {
+    verbatim_model::request::ServedWindow {
+        handle: WindowHandle(handle),
+        top_level: WindowHandle(4),
+        root_owner: WindowHandle(4),
+        process: APP,
+        thread: 41,
     }
 }
 
@@ -960,7 +971,7 @@ fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process: APP,
+        process: Some(APP),
         thread: 41,
     }
 }

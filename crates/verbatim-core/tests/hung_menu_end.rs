@@ -53,7 +53,7 @@ fn report(app: App) -> QueueInput {
     QueueInput::Foreground(ForegroundReport {
         window: app.top_level(),
         root_owner: app.top_level(),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,

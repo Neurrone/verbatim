@@ -180,10 +180,14 @@ pub struct NodeWindow {
     pub top_level: WindowHandle,
     /// The top of its owner chain (`GA_ROOTOWNER`).
     pub root_owner: WindowHandle,
-    /// The process that owns it.
-    pub process: Pid,
-    /// The thread that owns it, read by the same call as its process,
-    /// which keys its backend verdict.
+    /// The process that serves it, whose outpost a request on the node is
+    /// asked of: its owner, or for a console window its console host
+    /// (`verbatim_win32::provider::serving_process`). `None` when that
+    /// cannot be read, as for a console whose client runs as another user:
+    /// no reader serves a request on the node (Claude, 2026-11-27).
+    pub process: Option<Pid>,
+    /// The thread Windows names as its owner, which keys its backend
+    /// verdict.
     pub thread: u32,
     /// Whether the window is the desktop window (`GetDesktopWindow`), so
     /// the node is the desktop's own, which Core names itself as NVDA
@@ -192,6 +196,25 @@ pub struct NodeWindow {
     /// out of the message when `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub desktop: bool,
+}
+
+/// A node's nearest window whose serving process is known, as Core names
+/// the committed focus's in a caret key's binding: a [`NodeWindow`] with
+/// its process, so a binding always names the outpost its key's requests
+/// go to (Claude, 2026-11-27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ServedWindow {
+    /// The window.
+    pub handle: WindowHandle,
+    /// Its top-level window (`GA_ROOT`).
+    pub top_level: WindowHandle,
+    /// The top of its owner chain (`GA_ROOTOWNER`).
+    pub root_owner: WindowHandle,
+    /// The process that serves it.
+    pub process: Pid,
+    /// The thread Windows names as its owner, which keys its backend
+    /// verdict.
+    pub thread: u32,
 }
 
 /// A node an answer read, minted by the outpost that read it, with its
@@ -759,9 +782,11 @@ pub struct ForegroundReport {
     pub ghost: Option<WindowHandle>,
     /// The top of its owner chain.
     pub root_owner: WindowHandle,
-    /// The application holding attention: the window's owner, or for a
-    /// console window its console host.
-    pub process: Pid,
+    /// The application holding attention: the process serving the window,
+    /// its owner or for a console window its console host; `None` when
+    /// none can be read, when Core starts no outpost and asks no reader
+    /// for it (Claude, 2026-11-27).
+    pub process: Option<Pid>,
     /// The thread that owns the window, which keys its backend verdict.
     pub thread: u32,
     /// Its class.
@@ -1080,8 +1105,9 @@ pub enum PressAction {
 pub struct CaretBinding {
     /// The node.
     pub node: NodeId,
-    /// Its nearest window.
-    pub window: NodeWindow,
+    /// Its nearest window, the committed focus's, with the process serving
+    /// it.
+    pub window: ServedWindow,
     /// Its role, by which Core alone judges a terminal.
     pub role: crate::Role,
     /// How its text is read.
@@ -1195,7 +1221,7 @@ mod tests {
                 handle: WindowHandle(5),
                 top_level: WindowHandle(5),
                 root_owner: WindowHandle(5),
-                process: Pid(9),
+                process: Some(Pid(9)),
                 thread: 2,
                 desktop: false,
             },

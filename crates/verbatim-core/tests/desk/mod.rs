@@ -91,7 +91,7 @@ impl App {
             handle: self.window(),
             top_level: self.top_level(),
             root_owner: self.top_level(),
-            process: self.pid,
+            process: Some(self.pid),
             thread: 41,
             desktop: false,
         }
@@ -102,7 +102,7 @@ impl App {
         WindowFacet {
             handle,
             class: class.to_owned(),
-            process: self.pid,
+            process: Some(self.pid),
             thread: 41,
         }
     }

@@ -228,7 +228,14 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
             let Some(foreground) = cx.foreground() else {
                 return;
             };
-            foreground.window()
+            let Some(window) = foreground.window() else {
+                // No process could be read as serving the window in
+                // front: no reader is asked, and the check ends as an
+                // untried read.
+                validity::untried_read(&mut cx.facts_mut());
+                return;
+            };
+            window
         }
         // A check joins the queue only by a wake, which carries the read.
         InFront::Gone | InFront::Waiting => return,

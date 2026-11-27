@@ -38,7 +38,7 @@ fn focus_process(cx: &Cx<Entries>) -> Option<Pid> {
         .versions
         .live()
         .map(|focus| focus.kept.asked.process)
-        .or_else(|| cx.foreground().map(|front| front.process))
+        .or_else(|| cx.foreground().and_then(|front| front.process))
 }
 
 /// What `tell`, carrying `notification` ([`run`]), says, judged against

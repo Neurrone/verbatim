@@ -496,14 +496,15 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
   arbitrator records nothing for. `RawProbe::has_provider` is true
   only for `Provider`. The probe's memory cost in the application is
   risk 7 of `books/dev/src/explanation/design/listener-without-connections.md`.
-- The functions below, from `provider_process` to
+- The functions below, from `serving_process` to
   `raw_view_parent_window`, are `verbatim_win32::provider`'s
   ([verbatim-win32](verbatim-win32.md)), which callers in both backends
   use from there; they are described here, beside the checks that use
   them.
-- `provider_process(hwnd)` and `console_host_of(client)`: the process that
+- `serving_process(reads, hwnd, raised_by)`: the process that
   serves a window's UIA, by local calls: the window's owner, except a
-  console window, whose provider is its console host, read from the
+  console window, whose provider is its console host: the process of the
+  event's thread `raised_by` when given, else read from the
   client with `NtQueryInformationProcess`'s `ProcessConsoleHostProcess`
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3). A console
   window whose host cannot be read has no provider process.

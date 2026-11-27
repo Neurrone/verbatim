@@ -58,7 +58,7 @@ const NEXT_OUTPOST: Instance = Instance {
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(10),
     root_owner: WindowHandle(10),
-    process: APP,
+    process: Some(APP),
     thread: 0,
     by_class: None,
     ..Foreground::BLANK
@@ -68,7 +68,7 @@ const IN_FRONT: Foreground = Foreground {
 const SAME_APP_ELSEWHERE: Foreground = Foreground {
     window: WindowHandle(30),
     root_owner: WindowHandle(30),
-    process: APP,
+    process: Some(APP),
     thread: 0,
     by_class: None,
     ..Foreground::BLANK
@@ -77,7 +77,7 @@ const SAME_APP_ELSEWHERE: Foreground = Foreground {
 const ELSEWHERE: Foreground = Foreground {
     window: WindowHandle(20),
     root_owner: WindowHandle(20),
-    process: Pid(2),
+    process: Some(Pid(2)),
     thread: 0,
     by_class: None,
     ..Foreground::BLANK
@@ -673,7 +673,7 @@ fn a_request_out_whose_window_is_found_hung_stops_with_the_sound_when_attended()
 const CONSOLE_IN_FRONT: Foreground = Foreground {
     window: WindowHandle(10),
     root_owner: WindowHandle(10),
-    process: Pid(2),
+    process: Some(Pid(2)),
     thread: 0,
     by_class: None,
     ..Foreground::BLANK
@@ -1632,7 +1632,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "recovery: {}, round_due_us: Some(502000) }, ",
             "readers: {Outpost(Pid(1)): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
             "foreground: Some(Foreground { window: WindowHandle(10), root_owner: WindowHandle(10), ",
-            "process: Pid(1), thread: 0, by_class: None, ghost: None, console: false, ",
+            "process: Some(Pid(1)), thread: 0, by_class: None, ghost: None, console: false, ",
             "integrity: None, own_integrity: None }), backend: BackendCache { probed: {} }, facts: 1 }"
         )
     );

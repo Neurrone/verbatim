@@ -241,30 +241,33 @@ pub(crate) fn front_fence(cx: &Cx<Entries>) -> Fence {
     cx.front().map_or(Fence::default(), |front| front.fence())
 }
 
-/// The window a request about `tell` names, from its window's facts.
+/// The window a request about `tell` names, from its window's facts;
+/// `None` when it has none, or no process could be read as serving it, so
+/// that no reader can be asked about it.
 pub(crate) fn request_window(tell: &Event) -> Option<RequestWindow> {
     let facts = window_facts(tell)?;
     Some(RequestWindow {
         handle: facts.window.handle,
         top_level: facts.root.handle,
         root_owner: facts.root_owner.handle,
-        process: facts.window.process,
+        process: facts.window.process?,
         thread: facts.window.thread,
         by_class: by_class(&facts.window.class, &facts.root.class),
     })
 }
 
 /// The window a reader's report of a hung window names, from its facets,
-/// as [`request_window`] names a tell's.
-fn hung_window(hung: &verbatim_model::tell::Hung) -> RequestWindow {
-    RequestWindow {
+/// as [`request_window`] names a tell's; `None` when no process could be
+/// read as serving it.
+fn hung_window(hung: &verbatim_model::tell::Hung) -> Option<RequestWindow> {
+    Some(RequestWindow {
         handle: hung.window.handle,
         top_level: hung.root.handle,
         root_owner: hung.root_owner.handle,
-        process: hung.window.process,
+        process: hung.window.process?,
         thread: hung.window.thread,
         by_class: by_class(&hung.window.class, &hung.root.class),
-    }
+    })
 }
 
 impl Entry {
@@ -717,7 +720,7 @@ impl Logic for Entries {
         said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
         crate::keys::terminal::released(facts, now_us / 1_000);
         said.extend(crate::desktop::tick(facts, now_us));
-        crate::input_desktop::tick(facts, now_us, foreground.map(|front| front.window()))
+        crate::input_desktop::tick(facts, now_us, foreground.as_ref())
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
             .collect()
@@ -752,9 +755,8 @@ impl Logic for Entries {
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {
-        Some(Entry::CurrentFocus(Box::new(
-            crate::focus::retake::startup(facts, foreground),
-        )))
+        crate::focus::retake::startup(facts, foreground)
+            .map(|read| Entry::CurrentFocus(Box::new(read)))
     }
 
     fn reader_ended(
@@ -994,7 +996,7 @@ impl Logic for Entries {
                 && facts.strokes.status(caret.key_seq)
                     == crate::keys::strokes::StrokeStatus::Unsent
                 && caret.bound.as_ref().is_some_and(|bound| {
-                    !foreground.holds(&RequestWindow::of_node(&bound.window))
+                    !foreground.holds(&RequestWindow::of_served(&bound.window))
                 });
         }
         let window = match entry {
@@ -1218,7 +1220,14 @@ pub(crate) fn route(
             window: *window,
             process: *process,
         },
-        QueueInput::WindowHung { hung, .. } => Input::WindowHung(hung_window(hung)),
+        QueueInput::WindowHung { hung, .. } => {
+            // A window no process is read as serving has no request out on
+            // it, so none waits on its recovery.
+            let Some(window) = hung_window(hung) else {
+                return Routed::Said(Vec::new());
+            };
+            Input::WindowHung(window)
+        }
         QueueInput::Due { in_front } => {
             // The checks after a menu, popup or switcher end that this wake
             // brings ask by what Windows named in front as the shell made
@@ -1237,13 +1246,23 @@ pub(crate) fn route(
             asker,
             window,
             request,
-        } => Input::AskOutside {
-            asker: Asker(*asker),
-            reader: Reader::Outpost(window.process),
-            window: RequestWindow::of_node(window),
-            request: request.clone(),
-            due_after_us: OTHER_DUE_US,
-        },
+        } => {
+            // A window no process is read as serving has no outpost to
+            // ask: its asker is answered at once.
+            let Some(window) = RequestWindow::of_node(window) else {
+                return Routed::Said(vec![Said::Queue(QueueEffect::Answered {
+                    asker: *asker,
+                    outcome: verbatim_model::request::Outcome::NotThere,
+                })]);
+            };
+            Input::AskOutside {
+                asker: Asker(*asker),
+                reader: Reader::Outpost(window.process),
+                window,
+                request: request.clone(),
+                due_after_us: OTHER_DUE_US,
+            }
+        }
         QueueInput::WithdrawOutside(asker) => Input::WithdrawOutside(Asker(*asker)),
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);

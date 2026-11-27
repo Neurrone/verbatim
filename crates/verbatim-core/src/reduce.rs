@@ -1117,7 +1117,7 @@ pub(crate) fn reduce_controlled_selection(
     state: &mut SrState,
     trace_id: TraceId,
     controller: NodeId,
-    (node, window): (&NodeSnapshot, crate::event_queue::RequestWindow),
+    (node, window): (&NodeSnapshot, Option<crate::event_queue::RequestWindow>),
 ) -> Vec<Effect> {
     if state
         .versions
@@ -1126,7 +1126,7 @@ pub(crate) fn reduce_controlled_selection(
     {
         return Vec::new();
     }
-    state.navigator = Some(Navigator::on(node.clone(), Some(window)));
+    state.navigator = Some(Navigator::on(node.clone(), window));
     let positions = speaks_positions(state);
     let effects = vec![Effect::Speak(
         announce_node(

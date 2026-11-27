@@ -295,7 +295,7 @@ fn hung(window: u64, thread: u32, at_ms: u64) -> Hung {
     let facet = WindowFacet {
         handle: WindowHandle(window),
         class: "Static".to_owned(),
-        process: Pid(4),
+        process: Some(Pid(4)),
         thread,
     };
     Hung {

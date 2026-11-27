@@ -1901,7 +1901,6 @@ mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, control_window};
-    use verbatim_win32::window::window_owner;
 
     fn node(id: u64) -> NodeSnapshot {
         NodeSnapshot {
@@ -1918,7 +1917,7 @@ mod tests {
     #[test]
     fn only_the_console_host_reads_the_focus_in_its_console_window() {
         verbatim_test_console::Console::with(|console| {
-            let (_, client) = window_owner(console.window);
+            let client = console.client;
             assert_eq!(control_window(client, || Some(console.window)), None);
             assert_eq!(
                 control_window(console.host, || Some(console.window)),

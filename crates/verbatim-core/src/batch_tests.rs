@@ -175,10 +175,11 @@ fn a_wanted_batch_is_answered_by_its_named_handles() {
         handle: WindowHandle(5),
         top_level: WindowHandle(5),
         root_owner: WindowHandle(5),
-        process: Pid(9),
+        process: Some(Pid(9)),
         thread: 1,
         desktop: false,
-    });
+    })
+    .expect("a window its process serves");
     wants.want(
         Some(token),
         (Reader::Listener, window),

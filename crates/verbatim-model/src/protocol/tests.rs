@@ -35,7 +35,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
         ListenerToCore::ExitHandled { .. } => ListenerToCore::Foreground {
             window: 1,
             root_owner: 1,
-            process: 2,
+            process: Some(Pid(2)),
             observed_at_us: 1,
             thread: 1,
             console: false,
@@ -75,7 +75,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             let facet = crate::tell::WindowFacet {
                 handle: crate::WindowHandle(1),
                 class: "Notepad".to_owned(),
-                process: Pid(2),
+                process: Some(Pid(2)),
                 thread: 3,
             };
             ListenerToCore::Hung(crate::tell::Hung {

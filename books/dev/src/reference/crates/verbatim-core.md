@@ -195,7 +195,28 @@ a token (a terminal's output reads and baseline).
   before an answer (`Logic::ends`), for its three causes
   (`event_queue::Cause`): an entry arriving, judged before the limiter
   merges it; the foreground report; and the queue settling after Core's
-  facts changed outside it, which `entries::unsettled` asks too. A request no
+  facts changed outside it, which `entries::unsettled` asks too.
+- A request goes to the outpost of the process serving the window it
+  names, which the reader that read the window decided
+  (`verbatim_win32::provider::serving_process`): a node read's window
+  (`NodeWindow`) and a tell's facets carry it as an `Option<Pid>`, `None`
+  when none could be read (Claude, 2026-11-27). Core takes it once, at
+  `RequestWindow::of_node` and `entries::request_window`: with none, a
+  navigation leaves the navigator put and says nothing, a controlled
+  selection's navigator names no window, a hidden dialog is not
+  postponed, a hung window is not watched, a tell is taken as having no
+  window to ask, and an asker outside the queue is answered "not there".
+  The foreground record's process is the same `Option<Pid>`
+  (`event_queue::Foreground`): with none, Core starts no outpost, holds
+  no attention for it, and asks no reader (`Foreground::window` gives
+  none), so no startup read, menu or switch check, or read on the input
+  desktop's return is sent; the check and the return's read end as an
+  untried read (`validity::untried_read`): the focus's caret and
+  selection facts are forgotten and the readers' last focus's fence
+  stays.
+  A caret key's binding carries the committed focus's window as a
+  `ServedWindow`, whose process is always known.
+- A request no
   longer awaited that went out is kept by its number and instance only so
   that its late answer is dropped, and forgotten when that instance ends.
 - Only the front entry may have a request out; its function is paused at

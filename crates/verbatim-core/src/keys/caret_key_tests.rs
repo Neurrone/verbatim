@@ -59,8 +59,8 @@ fn is_text(batch: &Batch) -> bool {
 }
 
 use crate::entries::tests::{
-    APP, Held, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, node, ready, uia_tell,
-    values, win,
+    APP, Held, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, node, ready, served,
+    uia_tell, values,
 };
 use crate::entries::{Entry, feed};
 use crate::event_queue::{Foreground, Input, Timed};
@@ -72,7 +72,7 @@ use verbatim_model::Effect;
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -999,7 +999,7 @@ fn a_key_whose_field_is_no_longer_the_focus_runs_on_that_field() {
     let mut held = editing();
     let earlier = CaretBinding {
         node: node(6),
-        window: win(6),
+        window: served(6),
         ..bound(&held)
     };
     let asked = step(
@@ -1379,7 +1379,7 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
         bound(&held),
         CaretBinding {
             node: node(2),
-            window: win(4),
+            window: served(4),
             role: Role::EditableText,
             provider: TextProvider::Uia,
             record: Some(TraceId::from_raw(0)),
@@ -1793,7 +1793,7 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     crate::terminal::reading::modelled_for_tests(
         &mut held.state,
         terminal.node,
-        crate::event_queue::RequestWindow::of_node(&terminal.window),
+        crate::event_queue::RequestWindow::of_served(&terminal.window),
     );
     let sent = step(
         &mut held,

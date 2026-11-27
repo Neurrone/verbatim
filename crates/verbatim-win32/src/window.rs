@@ -28,7 +28,8 @@ use windows::core::{BOOL, HSTRING, s, w};
 use verbatim_model::HIDDEN_FRAME_WINDOW_PROP;
 use verbatim_reader_rules::class::WindowClasses;
 
-use crate::provider::{provider_process, served_by};
+use crate::provider::{served_by, serving_process};
+use crate::window_facts::{Owner, SystemReads};
 
 /// The `HWND` for a handle value.
 fn hwnd(handle: isize) -> HWND {
@@ -212,7 +213,7 @@ pub fn window_is_hidden_frame(handle: isize) -> bool {
     // SAFETY: GetPropW reads a window property by name; an invalid or
     // property-less window yields a null handle.
     let value = unsafe { GetPropW(hwnd(handle), &name) };
-    !value.0.is_null() && core_pid().is_some_and(|core| window_owner(handle).1 == core)
+    !value.0.is_null() && core_pid().is_some_and(|core| window_owner(handle).process() == core)
 }
 
 /// Core's process id: this process's parent, read once. `None` when it
@@ -489,11 +490,11 @@ pub fn thread_focus_window(thread: u32) -> Option<isize> {
 /// waiting on (`_shouldRecoverAfterMinTimeout`), because its one core thread
 /// serves every application; an outpost, or a reading thread, serves one,
 /// so only that application's other threads are held up. The application
-/// is the window's provider process ([`provider_process`]), so a console
+/// is the window's provider process ([`serving_process`]), so a console
 /// window is its console host's, never its client's. `false` when either
 /// window's owner or provider cannot be told, so a console window whose
-/// host cannot be read (`provider_process` answers `None`, as for an
-/// elevated client) is never moved on from, nor moved on to. Console
+/// host cannot be read (`serving_process` answers `None`) is never moved
+/// on from, nor moved on to. Console
 /// host's Find, Properties and Defaults windows are on the console
 /// window's real thread, which `GetWindowThreadProcessId` reports as the
 /// client's for the console window, so with one of them in front a slow
@@ -505,7 +506,7 @@ pub fn front_is_another_thread_of_its_application(handle: isize) -> bool {
 }
 
 /// Whether `other` is served by the same process as `handle`, by
-/// [`provider_process`], on another UI thread than `handle`'s: with `other`
+/// [`serving_process`], on another UI thread than `handle`'s: with `other`
 /// the window in front, as [`front_is_another_thread_of_its_application`]
 /// reads it or a caller's own reader of it gives it, whether the user has
 /// moved on from `handle`. `false` when either window's owner or provider
@@ -515,23 +516,25 @@ pub fn front_is_another_thread_of_its_application(handle: isize) -> bool {
 /// `NtQueryInformationProcess` and `CloseHandle`.
 #[must_use]
 pub fn is_another_thread_of_its_application(handle: isize, other: isize) -> bool {
-    let (thread, _) = window_owner(handle);
-    let (other_thread, _) = window_owner(other);
+    let thread = window_owner(handle).thread();
+    let other_thread = window_owner(other).thread();
     thread != 0
         && other_thread != 0
         && other_thread != thread
-        && provider_process(handle)
-            .is_some_and(|provider| provider_process(other) == Some(provider))
+        && serving_process(&SystemReads, handle, None)
+            .is_some_and(|provider| serving_process(&SystemReads, other, None) == Some(provider))
 }
 
-/// The thread and process that own `handle`, zeros for an invalid window.
-#[must_use]
-pub fn window_owner(handle: isize) -> (u32, u32) {
+/// The thread and process that own `handle`, zeros for an invalid window:
+/// crate-private, so that the process serving a window is read only by
+/// its one rule ([`serving_process`]) and a window's thread by
+/// [`window_thread`].
+pub(crate) fn window_owner(handle: isize) -> Owner {
     let mut pid = 0u32;
     // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0 for
     // an invalid one.
     let thread = unsafe { GetWindowThreadProcessId(hwnd(handle), Some(&raw mut pid)) };
-    (thread, pid)
+    Owner::new(thread, pid)
 }
 
 /// The top-level windows of `target_pid` ([`served_by`]).
@@ -694,7 +697,7 @@ mod tests {
     #[test]
     fn a_console_window_is_its_console_hosts_not_its_clients() {
         verbatim_test_console::Console::with(|console| {
-            let (_, client) = window_owner(console.window);
+            let client = window_owner(console.window).process();
             assert_ne!(
                 client, console.host,
                 "Windows names the client as its owner"
@@ -753,8 +756,14 @@ mod tests {
     #[test]
     fn a_console_window_and_its_clients_own_window_are_not_one_application() {
         verbatim_test_console::Console::with_client_window(|console| {
-            let (console_thread, client) = window_owner(console.window);
-            let (window_thread, window_owner_pid) = window_owner(console.client_window);
+            let (console_thread, client) = {
+                let owner = window_owner(console.window);
+                (owner.thread(), owner.process())
+            };
+            let (window_thread, window_owner_pid) = {
+                let owner = window_owner(console.client_window);
+                (owner.thread(), owner.process())
+            };
             assert_eq!(
                 window_owner_pid, client,
                 "Windows names the client as both windows' owner"

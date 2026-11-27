@@ -100,17 +100,26 @@ impl RequestWindow {
             handle: self.handle,
             top_level: self.top_level,
             root_owner: self.root_owner,
-            process: self.process,
+            process: Some(self.process),
             thread: self.thread,
             desktop: false,
         }
     }
 
-    /// The window a request on a node an answer read names: the node's
-    /// nearest window with the facts the reader read of it. Its classes are
-    /// not read, so probes decide its backend; a request on a node an
-    /// outpost holds is read through that node's own backend.
-    pub(crate) fn of_node(window: &verbatim_model::request::NodeWindow) -> Self {
+    /// The window as a caret key's binding names it.
+    pub(crate) fn served_window(&self) -> verbatim_model::request::ServedWindow {
+        verbatim_model::request::ServedWindow {
+            handle: self.handle,
+            top_level: self.top_level,
+            root_owner: self.root_owner,
+            process: self.process,
+            thread: self.thread,
+        }
+    }
+
+    /// The window a caret key's binding names, its classes not read, as
+    /// [`RequestWindow::of_node`] names a node's.
+    pub(crate) fn of_served(window: &verbatim_model::request::ServedWindow) -> Self {
         Self {
             handle: window.handle,
             top_level: window.top_level,
@@ -119,6 +128,23 @@ impl RequestWindow {
             thread: window.thread,
             by_class: None,
         }
+    }
+
+    /// The window a request on a node an answer read names: the node's
+    /// nearest window with the facts the reader read of it. Its classes are
+    /// not read, so probes decide its backend; a request on a node an
+    /// outpost holds is read through that node's own backend. `None` for a
+    /// window no process could be read as serving, on whose nodes no
+    /// reader can be asked.
+    pub(crate) fn of_node(window: &verbatim_model::request::NodeWindow) -> Option<Self> {
+        Some(Self {
+            handle: window.handle,
+            top_level: window.top_level,
+            root_owner: window.root_owner,
+            process: window.process?,
+            thread: window.thread,
+            by_class: None,
+        })
     }
 
     /// The window as the backend cache judges it.
@@ -140,8 +166,10 @@ pub(crate) struct Foreground {
     pub(crate) window: WindowHandle,
     /// The top of its owner chain.
     pub(crate) root_owner: WindowHandle,
-    /// The application holding attention.
-    pub(crate) process: Pid,
+    /// The application holding attention, the process serving the window;
+    /// `None` when none could be read, so that no outpost is started for
+    /// it and no reader asked about it (Claude, 2026-11-27).
+    pub(crate) process: Option<Pid>,
     /// The thread that owns the window.
     pub(crate) thread: u32,
     /// The backend its class gives, `None` when probes decide.
@@ -166,7 +194,7 @@ impl Foreground {
     pub(crate) const BLANK: Self = Self {
         window: WindowHandle(0),
         root_owner: WindowHandle(0),
-        process: Pid(0),
+        process: None,
         thread: 0,
         by_class: None,
         ghost: None,
@@ -186,16 +214,17 @@ impl Foreground {
             .any(|handle| *handle == self.window || *handle == self.root_owner)
     }
 
-    /// The foreground window as a request names it.
-    pub(crate) fn window(&self) -> RequestWindow {
-        RequestWindow {
+    /// The foreground window as a request names it; `None` when no
+    /// process could be read as serving it, so no reader can be asked.
+    pub(crate) fn window(&self) -> Option<RequestWindow> {
+        Some(RequestWindow {
             handle: self.window,
             top_level: self.window,
             root_owner: self.root_owner,
-            process: self.process,
+            process: self.process?,
             thread: self.thread,
             by_class: self.by_class,
-        }
+        })
     }
 
     /// Whether `window`'s application holds attention: it owns the
@@ -204,7 +233,7 @@ impl Foreground {
     /// `ApplicationFrameHost`'s frame, which the foreground names
     /// (`docs/parity/focus-events.md`, "Event acceptance").
     pub(crate) fn attends(&self, window: &RequestWindow) -> bool {
-        self.process == window.process || window.top_level == self.window
+        self.process == Some(window.process) || window.top_level == self.window
     }
 }
 

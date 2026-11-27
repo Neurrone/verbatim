@@ -335,14 +335,21 @@ impl CoreDriver {
 
     /// The listener's foreground report of the window the outpost reads as
     /// the foreground, as it sends one when that window comes to the front.
+    /// Windows' state as the listener reads it, with the test's foreground.
+    fn reads(&self) -> TestReads {
+        TestReads {
+            app: self.app,
+            foreground: self.outpost.foreground(),
+        }
+    }
+
     pub fn foreground_report(&mut self) -> Step {
         let window = self.outpost.foreground();
-        let (thread, process) = verbatim_win32::window::window_owner(window);
         self.feed(QueueInput::Foreground(ForegroundReport {
             window: WindowHandle::from(window),
             root_owner: WindowHandle::from(verbatim_win32::window::root_owner_of(window)),
-            process: Pid(process),
-            thread,
+            process: self.reads().serving_process(window),
+            thread: verbatim_win32::window::window_thread(window),
             class: verbatim_win32::window::window_class_name(window),
             ghost: None,
             console: false,
@@ -509,6 +516,7 @@ impl CoreDriver {
             count,
         );
         let reads = TestReads {
+            app: self.app,
             foreground: self.outpost.foreground(),
         };
         let tells = events
@@ -547,8 +555,9 @@ impl CoreDriver {
         (object, child): (i32, i32),
     ) -> Option<Event> {
         let window = window.0 as isize;
-        let (thread, _) = verbatim_win32::window::window_owner(window);
+        let thread = verbatim_win32::window::window_thread(window);
         let reads = TestReads {
+            app: self.app,
             foreground: self.outpost.foreground(),
         };
         msaa_tell(
@@ -722,12 +731,14 @@ impl CoreDriver {
             self.clock.reach(wake);
             let in_front = self.state.menu_check_waits().then(|| {
                 let window = self.outpost.foreground();
-                let (thread, process) = verbatim_win32::window::window_owner(window);
                 LiveFront::Window(FrontWindow {
                     window: WindowHandle::from(window),
                     root_owner: WindowHandle::from(verbatim_win32::window::root_owner_of(window)),
-                    process: Pid(process),
-                    thread,
+                    process: self
+                        .reads()
+                        .serving_process(window)
+                        .expect("a test's window is served by its application"),
+                    thread: verbatim_win32::window::window_thread(window),
                     class: verbatim_win32::window::window_class_name(window),
                 })
             });
@@ -1125,6 +1136,7 @@ impl CoreDriver {
         let now = move || clock.now();
         let mut observer = self.check_observer.take();
         let reads = TestReads {
+            app: self.app,
             foreground: self.outpost.foreground(),
         };
         let _ = verbatim_win32::calls::take();
@@ -1199,6 +1211,18 @@ pub fn win_events(
 /// and active window, which are the test's.
 struct TestReads {
     foreground: isize,
+    /// Mockapp's process, which stands as the console host of a window it
+    /// makes with the console window's class, since no console is behind
+    /// it ([`WindowReads::console_host`]).
+    app: Pid,
+}
+
+impl TestReads {
+    /// The process serving `window` by the one rule
+    /// (`verbatim_win32::provider::serving_process`) over these reads.
+    fn serving_process(&self, window: isize) -> Option<Pid> {
+        verbatim_win32::provider::serving_process(self, window, None)
+    }
 }
 
 impl WindowReads for TestReads {
@@ -1206,12 +1230,22 @@ impl WindowReads for TestReads {
         verbatim_win32::window::window_class_name(window)
     }
 
-    fn owner(&self, window: isize) -> (u32, u32) {
-        verbatim_win32::window::window_owner(window)
+    fn owner(&self, window: isize) -> verbatim_win32::window_facts::Owner {
+        SystemReads.owner(window)
     }
 
-    fn console_host(&self, window: isize) -> Option<u32> {
-        verbatim_win32::provider::provider_process(window)
+    fn console_host(&self, client: u32) -> Option<u32> {
+        // A window mockapp makes with the console window's class has mockapp
+        // as its owner and no console behind it: mockapp is its host.
+        if client == self.app.0 {
+            Some(client)
+        } else {
+            SystemReads.console_host(client)
+        }
+    }
+
+    fn process_of_thread(&self, thread: u32) -> Option<u32> {
+        SystemReads.process_of_thread(thread)
     }
 
     fn parent(&self, window: isize) -> isize {
@@ -1262,10 +1296,6 @@ impl EventReads for TestReads {
 
     fn stood_for(&self, window: isize) -> Option<isize> {
         SystemReads.stood_for(window)
-    }
-
-    fn process_of_thread(&self, thread: u32) -> Option<u32> {
-        SystemReads.process_of_thread(thread)
     }
 
     fn input_desktop_opens(&self) -> bool {

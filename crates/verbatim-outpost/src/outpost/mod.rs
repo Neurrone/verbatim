@@ -628,7 +628,7 @@ impl Context {
             ))
         } else {
             WindowState::Responsive {
-                thread: verbatim_win32::window::window_owner(window).0,
+                thread: verbatim_win32::window::window_thread(window),
             }
         }
     }
@@ -1291,12 +1291,16 @@ impl WindowReads for OutpostReads<'_> {
         SystemReads.class(window)
     }
 
-    fn owner(&self, window: isize) -> (u32, u32) {
+    fn owner(&self, window: isize) -> verbatim_win32::window_facts::Owner {
         SystemReads.owner(window)
     }
 
-    fn console_host(&self, window: isize) -> Option<u32> {
-        SystemReads.console_host(window)
+    fn console_host(&self, client: u32) -> Option<u32> {
+        SystemReads.console_host(client)
+    }
+
+    fn process_of_thread(&self, thread: u32) -> Option<u32> {
+        SystemReads.process_of_thread(thread)
     }
 
     fn parent(&self, window: isize) -> isize {

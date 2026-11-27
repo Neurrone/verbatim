@@ -20,7 +20,7 @@ use crate::keys::entry::PressEntry;
 const IN_FRONT: Foreground = Foreground {
     window: verbatim_model::WindowHandle(4),
     root_owner: verbatim_model::WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK

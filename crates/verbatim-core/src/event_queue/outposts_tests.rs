@@ -366,7 +366,7 @@ fn a_foreground_report_starts_an_outpost_and_ends_a_backoff() {
     let foreground = QueueInput::Foreground(verbatim_model::request::ForegroundReport {
         window: WindowHandle(4),
         root_owner: WindowHandle(4),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,

@@ -59,7 +59,7 @@ fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process: VERBATIM.pid,
+        process: Some(VERBATIM.pid),
         thread: 672,
     }
 }

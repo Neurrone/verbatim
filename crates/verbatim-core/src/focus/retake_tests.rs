@@ -24,7 +24,7 @@ use crate::focus::versions::{Committed, ReadBy};
 const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(4),
     root_owner: WindowHandle(4),
-    process: APP,
+    process: Some(APP),
     thread: 41,
     by_class: None,
     ..Foreground::BLANK
@@ -77,13 +77,48 @@ fn the_first_foreground_report_reads_the_focus_and_speaks_it_as_a_switch() {
     assert_eq!(*token, None);
 }
 
+/// A first foreground report whose window no process could be read as
+/// serving, a console whose client runs as another user, starts no outpost
+/// and asks no reader: no startup read waits on a process that does not
+/// exist, and no application holds attention.
+#[test]
+fn a_foreground_whose_process_cannot_be_read_starts_no_outpost_and_asks_nothing() {
+    let mut state = Held::default();
+    state.state.queue.start_for_tests(LISTENER);
+    assert_eq!(
+        feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
+        NOTHING
+    );
+    let unread = Foreground {
+        process: None,
+        ..IN_FRONT
+    };
+    let effects = crate::entries::feed(
+        &mut state.state,
+        &mut state.runtime,
+        crate::event_queue::Timed {
+            at_us: 500,
+            input: Input::Foreground(unread),
+        },
+    )
+    .unwrap();
+    assert_eq!(effects, Vec::<verbatim_model::Effect>::new());
+    assert_eq!(state.state.attention(), None);
+    assert_eq!(
+        state.state.queue.last_number_for_tests(),
+        0,
+        "no request begun"
+    );
+    assert!(state.state.queue.front_for_tests().is_none());
+}
+
 #[test]
 fn a_later_foreground_report_reads_nothing() {
     let mut state = started();
     let elsewhere = Foreground {
         window: WindowHandle(70),
         root_owner: WindowHandle(70),
-        process: Pid(41),
+        process: Some(Pid(41)),
         ..IN_FRONT
     };
     assert_eq!(

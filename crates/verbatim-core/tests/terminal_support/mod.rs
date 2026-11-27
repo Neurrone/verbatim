@@ -39,7 +39,7 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
     NodeRead, NodeWindow, Outcome, Press, PressAction, QueueEffect, QueueInput, Reader, Refusal,
-    Reply,
+    Reply, ServedWindow,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -71,7 +71,7 @@ pub fn window() -> NodeWindow {
         handle: WindowHandle(5),
         top_level: WindowHandle(4),
         root_owner: WindowHandle(4),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         desktop: false,
     }
@@ -81,7 +81,13 @@ pub fn window() -> NodeWindow {
 pub fn binding() -> CaretBinding {
     CaretBinding {
         node: node(),
-        window: window(),
+        window: ServedWindow {
+            handle: WindowHandle(5),
+            top_level: WindowHandle(4),
+            root_owner: WindowHandle(4),
+            process: APP,
+            thread: 41,
+        },
         role: Role::Terminal,
         provider: verbatim_model::TextProvider::Uia,
         record: None,
@@ -621,7 +627,7 @@ impl Session {
         session.queue(QueueInput::Foreground(ForegroundReport {
             window: WindowHandle(4),
             root_owner: WindowHandle(4),
-            process: APP,
+            process: Some(APP),
             thread: 41,
             class: if console {
                 "ConsoleWindowClass"

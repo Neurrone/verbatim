@@ -140,6 +140,15 @@ pub(crate) fn failed_read<T>(facts: &mut SrState, outcome: &Outcome<T>) {
     facts.focus_read_failed();
 }
 
+/// A focus read never made, because no reader could be asked: the window
+/// in front has no process that could be read as serving it. It was no
+/// try, so the readers' last focus's fence stays, as for a read not
+/// answered ([`failed_read`]); the focus's caret and selection facts are
+/// forgotten as for any read that gave no result.
+pub(crate) fn untried_read(facts: &mut SrState) {
+    facts.focus_read_failed();
+}
+
 /// The one answer about a candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Validity {

@@ -47,7 +47,7 @@ fn terminal() -> SrState {
         crate::event_queue::Input::Foreground(crate::event_queue::Foreground {
             window: verbatim_model::WindowHandle(4),
             root_owner: verbatim_model::WindowHandle(4),
-            process: crate::entries::tests::APP,
+            process: Some(crate::entries::tests::APP),
             thread: 41,
             by_class: None,
             ..crate::event_queue::Foreground::BLANK

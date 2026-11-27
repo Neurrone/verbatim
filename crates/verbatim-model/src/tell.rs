@@ -66,8 +66,10 @@ pub struct WindowFacet {
     /// Its class name.
     pub class: String,
     /// The process that serves it: its owner, or for a console window the
-    /// console host.
-    pub process: Pid,
+    /// console host (`verbatim_win32::provider::serving_process`); `None`
+    /// for no window, and when that cannot be read, as for a console whose
+    /// client runs as another user (Claude, 2026-11-27).
+    pub process: Option<Pid>,
     /// The thread that owns it, which keys its backend verdict with it.
     pub thread: u32,
 }
@@ -300,7 +302,7 @@ mod tests {
         WindowFacet {
             handle: WindowHandle(handle),
             class: class.to_owned(),
-            process: Pid(40),
+            process: Some(Pid(40)),
             thread: 41,
         }
     }

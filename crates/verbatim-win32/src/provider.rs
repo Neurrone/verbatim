@@ -12,33 +12,40 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, GA_PARENT, GA_ROOT, GW_OWNER, GetAncestor, GetClassNameW, GetDesktopWindow,
-    GetWindow, GetWindowThreadProcessId, IsWindowVisible,
+    EnumThreadWindows, GA_PARENT, GA_ROOT, GW_OWNER, GetAncestor, GetDesktopWindow, GetWindow,
+    IsWindowVisible,
 };
 use windows::core::BOOL;
 
-use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_model::Pid;
 
-/// The process that serves UIA for the window `hwnd`: its owner by
-/// `GetWindowThreadProcessId`, except for a console window, whose owner by
-/// that call is the console's client while its provider is the console
-/// host. Windows names the client's thread for a console window too, so the
-/// host is read from the client instead ([`console_host_of`]). `None` for a
-/// window that no longer exists, and for a console window whose host cannot
-/// be read, such as one whose client runs as another user, so that no
-/// outpost takes that window as its application's: never the client's,
-/// which would then connect into the console host. Local calls only; a
-/// console window costs the client's lookup too.
+use crate::window_facts::{Raised, Serving, SystemReads, WindowReads};
+
+/// The process that serves UIA for the window `hwnd`, read through `reads`
+/// (`SystemReads` for the running system): the one rule every reader, the
+/// shell and the tools decide it by ([`Owner::serving_process`]), so a
+/// console window is its console host's, never its client's. `raised_by`
+/// is the event on the window the caller has, if any ([`Raised`]): a
+/// `WinEvent`'s thread, which for a console window is its console host's
+/// own, or a UI Automation event's provider process, either naming the
+/// host directly. `None` for a window that no longer
+/// exists, and for a console window whose host cannot be read. Local
+/// calls only: the window's class and owner, and for a console window the
+/// thread's `OpenThread` and `GetProcessIdOfThread`, or with no thread
+/// given its client's `OpenProcess` and `NtQueryInformationProcess`.
 #[must_use]
-pub fn provider_process(hwnd: isize) -> Option<u32> {
-    match provider(hwnd)? {
-        Provider::Process(process) => Some(process),
-        Provider::UnreadConsole => None,
-    }
+pub fn serving_process(
+    reads: &impl WindowReads,
+    hwnd: isize,
+    raised_by: Option<Raised>,
+) -> Option<Pid> {
+    reads
+        .owner(hwnd)
+        .serving_process(&reads.class(hwnd), reads, raised_by)
 }
 
 /// Whether the process `pid` serves UIA for the window `hwnd`: whether it is
-/// the window's [`provider_process`], or, for a console window whose host
+/// the window's [`serving_process`], or, for a console window whose host
 /// cannot be read, whether the window is one of `pid`'s threads' own, which
 /// `EnumThreadWindows` answers by the thread that created the window where
 /// `GetWindowThreadProcessId` names the client's. So a console host
@@ -47,51 +54,20 @@ pub fn provider_process(hwnd: isize) -> Option<u32> {
 /// system's threads.
 #[must_use]
 pub fn served_by(hwnd: isize, pid: u32) -> bool {
-    match provider(hwnd) {
-        Some(Provider::Process(process)) => process == pid,
-        Some(Provider::UnreadConsole) => threads_own_window(pid, hwnd),
+    match serving(hwnd) {
+        Some(Serving::Process(process)) => process == pid,
+        Some(Serving::UnreadConsole) => threads_own_window(pid, hwnd),
         None => false,
     }
 }
 
-/// A window's provider, as far as it can be read.
-#[derive(Debug, PartialEq, Eq)]
-enum Provider {
-    /// The process that serves the window's UIA.
-    Process(u32),
-    /// A console window whose console host cannot be read from its client.
-    UnreadConsole,
-}
-
-/// `hwnd`'s provider, `None` for a window that no longer exists.
-fn provider(hwnd: isize) -> Option<Provider> {
-    let window = HWND(hwnd as *mut _);
-    let mut class = [0u16; 32];
-    // SAFETY: the buffer outlives the call, which writes at most its
-    // length; an invalid handle answers 0.
-    let length = unsafe { GetClassNameW(window, &mut class) };
-    let mut owner = 0u32;
-    // SAFETY: `owner` is a local; an invalid handle answers thread 0.
-    let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut owner)) };
-    if thread == 0 {
-        return None;
-    }
-    let class = usize::try_from(length)
-        .ok()
-        .and_then(|length| class.get(..length))
-        .map(String::from_utf16_lossy);
-    Some(provider_of(class.as_deref(), owner, console_host_of))
-}
-
-/// The provider of a window of class `class` that `GetWindowThreadProcessId`
-/// says `owner` owns: the owner, except for a console window, whose console
-/// host `host` reads from the owner, its client.
-fn provider_of(class: Option<&str>, owner: u32, host: impl FnOnce(u32) -> Option<u32>) -> Provider {
-    if class == Some(CONSOLE_WINDOW_CLASS) {
-        host(owner).map_or(Provider::UnreadConsole, Provider::Process)
-    } else {
-        Provider::Process(owner)
-    }
+/// `hwnd`'s serving process on the running system, a console window whose
+/// host cannot be read told apart; `None` for a window that no longer
+/// exists.
+fn serving(hwnd: isize) -> Option<Serving> {
+    SystemReads
+        .owner(hwnd)
+        .serving(&SystemReads.class(hwnd), &SystemReads, None)
 }
 
 /// Whether the top-level window `hwnd` belongs to one of `pid`'s threads by
@@ -152,7 +128,7 @@ fn threads_own_window(pid: u32, hwnd: isize) -> bool {
 /// (`GetWindow` with `GW_OWNER`) while the owner is visible, as a dialog
 /// is owned by the window that opened it; UIA's raw view puts an owned
 /// window under a visible owner and under the desktop when the owner is
-/// hidden. That window is answered when its [`provider_process`] is not
+/// hidden. That window is answered when its [`serving_process`] is not
 /// `hwnd`'s, so a console window above counts as its console host's
 /// (`books/dev/src/explanation/design/listener-without-connections.md`, "The process boundary").
 /// `None` for a top-level window with no visible owner, for a window above
@@ -162,7 +138,7 @@ fn threads_own_window(pid: u32, hwnd: isize) -> bool {
 #[must_use]
 pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
     let above = raw_view_parent_window(hwnd)?;
-    (provider(hwnd)? != provider(above)?).then_some(above)
+    (serving(hwnd)? != serving(above)?).then_some(above)
 }
 
 /// The window UIA's raw view goes up to from `hwnd`'s element, as
@@ -281,13 +257,28 @@ unsafe extern "system" {
 /// `ProcessConsoleHostProcess`: the console host of a console's client.
 const PROCESS_CONSOLE_HOST_PROCESS: u32 = 49;
 
+/// The process `thread` belongs to, read with `GetProcessIdOfThread`, a
+/// local call; `None` when the thread cannot be opened, such as one that
+/// has ended.
+pub(crate) fn process_of_thread(thread: u32) -> Option<u32> {
+    use windows::Win32::System::Threading::{
+        GetProcessIdOfThread, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: OpenThread has no preconditions; the handle is closed below.
+    let handle = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) }.ok()?;
+    // SAFETY: an open thread handle with the access the call needs.
+    let pid = unsafe { GetProcessIdOfThread(handle) };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { CloseHandle(handle) };
+    (pid != 0).then_some(pid)
+}
+
 /// The console host of the console client `client`, the process that
 /// serves its console window, or `None` when the client cannot be opened or
 /// has no console: `NtQueryInformationProcess`'s `ProcessConsoleHostProcess`,
 /// whose answer carries flags in its two low bits. A local call: it sends
-/// the console nothing.
-#[must_use]
-pub fn console_host_of(client: u32) -> Option<u32> {
+/// the console nothing. Read only by [`serving_process`]'s rule.
+pub(crate) fn console_host_of(client: u32) -> Option<u32> {
     // SAFETY: OpenProcess with a query-only right fails safely; the handle
     // is closed below.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, client) }.ok()?;
@@ -316,7 +307,10 @@ mod tests {
     };
     use windows::core::w;
 
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
     use super::*;
+    use crate::window_facts::node_window;
     use verbatim_test_console::Console;
 
     #[test]
@@ -329,24 +323,25 @@ mod tests {
             };
             assert_ne!(owner, console.host, "the console's client owns its window");
             assert_eq!(console_host_of(owner), Some(console.host));
-            assert_eq!(provider_process(console.window), Some(console.host));
+            assert_eq!(
+                serving_process(&SystemReads, console.window, None),
+                Some(Pid(console.host))
+            );
         });
     }
 
+    /// A node read in a console window names the console host as the
+    /// process its requests go to, so object navigation's next step is
+    /// asked of the console host's outpost, which holds the node, and not
+    /// of the client's (second 2 of the audit).
     #[test]
-    fn a_console_window_whose_host_cannot_be_read_has_no_provider_process() {
-        assert_eq!(
-            provider_of(Some(CONSOLE_WINDOW_CLASS), 20, |_| None),
-            Provider::UnreadConsole
-        );
-        assert_eq!(
-            provider_of(Some(CONSOLE_WINDOW_CLASS), 20, |_| Some(30)),
-            Provider::Process(30)
-        );
-        assert_eq!(
-            provider_of(Some("Notepad"), 20, |_| panic!("the host is not read")),
-            Provider::Process(20)
-        );
+    fn a_node_in_a_console_window_names_its_console_host_not_its_client() {
+        Console::with(|console| {
+            assert_eq!(
+                node_window(&SystemReads, console.window).process,
+                Some(Pid(console.host))
+            );
+        });
     }
 
     #[test]
@@ -382,10 +377,10 @@ mod tests {
             )
         }
         .expect("a window of the test's own");
-        let served_by = provider_process(window.0 as isize);
+        let served_by = serving_process(&SystemReads, window.0 as isize, None);
         // SAFETY: the window this thread created.
         let _ = unsafe { DestroyWindow(window) };
-        assert_eq!(served_by, Some(std::process::id()));
+        assert_eq!(served_by, Some(Pid(std::process::id())));
     }
 
     /// A walk cut short whose outermost element is its window's own has

@@ -134,7 +134,7 @@ fn facet(app: App, handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
     }
 }
@@ -177,7 +177,7 @@ fn node_window(app: App, win: Win) -> NodeWindow {
         handle: WindowHandle(win.top + 1),
         top_level: WindowHandle(win.top),
         root_owner: WindowHandle(win.owner),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
         desktop: false,
     }
@@ -426,7 +426,7 @@ fn change(desk: &mut Desk, app: App, (window, root_owner): (u64, u64)) -> Vec<He
     desk.step(QueueInput::Foreground(ForegroundReport {
         window: WindowHandle(window),
         root_owner: WindowHandle(root_owner),
-        process: app.pid,
+        process: Some(app.pid),
         thread: 41,
         class: "Frame".to_owned(),
         ghost: None,
@@ -1225,7 +1225,7 @@ fn explorer_in_front(desk: &mut Desk, window: u64, class: &str) -> Vec<Heard> {
     desk.step(QueueInput::Foreground(ForegroundReport {
         window: WindowHandle(window),
         root_owner: WindowHandle(window),
-        process: EXPLORER.pid,
+        process: Some(EXPLORER.pid),
         thread: 41,
         class: class.to_owned(),
         ghost: None,

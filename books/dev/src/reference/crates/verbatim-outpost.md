@@ -62,8 +62,10 @@ kind, and Core asks the outpost for what it reads.
 A console window is one application in its console host's outpost, as
 NVDA gives it and its text area the client's app module. The listener sends each
 `WinEvent` for a `ConsoleWindowClass` window to the process of the event's
-thread, the console host (`verbatim-listener`'s `tells::routed_process`, by which Core's reads of a window's MSAA object are routed too), dropping one whose
-thread cannot be opened, so Core asks the console host's outpost of the
+window's serving process, the console host
+(`verbatim_win32::provider::serving_process`, by which Core's reads of a
+window's MSAA object are routed too), dropping one whose host cannot be
+read, so Core asks the console host's outpost of the
 window, which answers a current-focus request for it. A focus answer
 carries its application's name, read once per process and kept with the
 process held open (`outpost::ApplicationNames`).
@@ -87,9 +89,12 @@ Every window a request names is first checked as its application's
 (through `served_by`): another process's window is neither probed, read
 nor reported, with a debug line naming it, since any process can raise a
 `WinEvent` naming another's window, and the probe, or a console window's
-check by handle, would call into that process. Core routes a console
-client's request to its host through `verbatim_win32::provider`'s
-`provider_process` and `console_host_of`.
+check by handle, would call into that process. A node the outpost reads
+names its window's serving process (`asked::node_window`, through
+`verbatim_win32::window_facts::node_window`), the console host for a
+console window, so Core routes object navigation's next step in a console
+to the console host's outpost, which holds the node; a window whose host
+cannot be read names none, and Core asks nothing about its nodes.
 
 A focus whose top-level window belongs to another process, as the Settings
 page inside `ApplicationFrameHost`'s frame, is read by the listener up to

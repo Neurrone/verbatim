@@ -343,7 +343,7 @@ impl<L: Logic> Core<L> {
         let wanted = queue.table.waiting_for(reader)
             || queue
                 .foreground
-                .is_some_and(|foreground| foreground.process == process);
+                .is_some_and(|foreground| foreground.process == Some(process));
         if wanted {
             if let Some(application) = queue.record.applications.get_mut(&process) {
                 application.stage = Stage::Launching;

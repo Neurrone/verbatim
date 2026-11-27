@@ -938,7 +938,7 @@ fn bring_forward(
         crate::event_queue::Foreground {
             window: app.top_level(),
             root_owner: app.top_level(),
-            process: app.pid,
+            process: Some(app.pid),
             thread: 41,
             by_class: None,
             ..crate::event_queue::Foreground::BLANK

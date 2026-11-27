@@ -121,14 +121,18 @@ pub(crate) fn postpone<T>(cx: &mut Cx<Entries>, outcome: Outcome<Hidden<T>>) -> 
 }
 
 /// Postpones the hidden dialog `dialog` a focus read met, keeping the
-/// older fence when it is postponed already.
+/// older fence when it is postponed already; a dialog no process is read
+/// as serving is not, since no read of it could be asked.
 pub(crate) fn postpone_dialog(cx: &mut Cx<Entries>, dialog: &NodeWindow) {
+    let Some(window) = RequestWindow::of_node(dialog) else {
+        return;
+    };
     let fence = front_fence(cx);
     let mut facts = cx.facts_mut();
     let postponed = &mut facts.versions.postponed;
     if postponed.is_none_or(|kept| kept.dialog.handle != dialog.handle) {
         *postponed = Some(Postponed {
-            dialog: RequestWindow::of_node(dialog),
+            dialog: window,
             fence,
         });
     }

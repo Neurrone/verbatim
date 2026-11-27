@@ -200,7 +200,12 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
             let Some(read) = reached.into_iter().next() else {
                 return;
             };
-            let window = RequestWindow::of_node(&read.window);
+            // A node in a window no process is read as serving has no
+            // reader to ask about it: the navigator stays put, and nothing
+            // is known to speak.
+            let Some(window) = RequestWindow::of_node(&read.window) else {
+                return;
+            };
             let Some(reached) = snapshot(read, &on.object) else {
                 return;
             };

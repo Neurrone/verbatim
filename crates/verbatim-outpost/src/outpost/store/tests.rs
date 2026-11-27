@@ -31,7 +31,7 @@ fn focus(nodes: &[NodeId]) -> OutpostToCore {
             handle: window,
             top_level: window,
             root_owner: window,
-            process: Pid(0),
+            process: None,
             thread: 0,
             desktop: false,
         },

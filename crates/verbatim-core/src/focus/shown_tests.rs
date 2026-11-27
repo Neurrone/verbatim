@@ -44,7 +44,7 @@ fn facet(handle: u64, class: &str, process: Pid) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
-        process,
+        process: Some(process),
         thread: 41,
     }
 }
@@ -174,7 +174,7 @@ fn in_front(window: u64, owner: u64, process: Pid) -> Input<Entry> {
     Input::Foreground(Foreground {
         window: WindowHandle(window),
         root_owner: WindowHandle(owner),
-        process,
+        process: Some(process),
         thread: 41,
         by_class: None,
         ..Foreground::BLANK
@@ -199,7 +199,7 @@ fn window_of(handle: u64, top_level: u64, owner: u64) -> NodeWindow {
         handle: WindowHandle(handle),
         top_level: WindowHandle(top_level),
         root_owner: WindowHandle(owner),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         desktop: false,
     }
@@ -542,6 +542,23 @@ fn what_leaves_the_dialog_for_its_show() {
             shown_speaks_the_dialog(&mut held, 1_200);
         }
     }
+}
+
+/// A hidden dialog in a window no process could be read as serving is not
+/// postponed, since no read of it could be asked at its show: nothing is
+/// said and nothing waits for it.
+#[test]
+fn a_hidden_dialog_with_no_serving_process_is_not_postponed() {
+    let mut held = dialog_asked();
+    let unserved = NodeWindow {
+        process: None,
+        ..window_of(DIALOG, DIALOG, OWNER)
+    };
+    assert_eq!(
+        answer_out(&mut held, 1_100, Found::HiddenDialog(unserved)),
+        NOTHING
+    );
+    assert_eq!(held.state.versions.postponed, None);
 }
 
 /// The dialog postponed by its field's focus with no foreground report
@@ -1030,7 +1047,7 @@ fn a_tray_menu_over_a_hidden_dialog_then_escape() {
     let front = Foreground {
         window: WindowHandle(DIALOG),
         root_owner: WindowHandle(DIALOG),
-        process: APP,
+        process: Some(APP),
         thread: 41,
         by_class: None,
         ..Foreground::BLANK
