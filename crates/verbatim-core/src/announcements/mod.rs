@@ -22,6 +22,7 @@ use verbatim_model::{NotificationKind, NotificationProcessing};
 use crate::entries::{Entries, request_window, window_facts};
 use crate::event_queue::{Cx, Function, MsaaClass, MsaaKey, Place, RequestWindow};
 use crate::focus::acceptance::{self, Accepted};
+use crate::focus::backend::{Judged, Judgement};
 use crate::keys::entry::Fence;
 
 /// An announcement's tell, parsed by its kind.
@@ -282,16 +283,15 @@ pub(crate) fn on_desktop(tell: &Event) -> bool {
     window_facts(tell).is_some_and(|facts| facts.desktop)
 }
 
-/// Whether a UI Automation tell's element is native, as the check's probe
-/// of its nearest window answered: a window with no provider of its own is
-/// read through MSAA, so its UI Automation events are dropped, as NVDA's
-/// `isNativeUIAElement` drops them. A tell whose check made no probe
-/// stands.
-fn native(tell: &Event) -> bool {
-    tell.checked
-        .as_ref()
-        .and_then(|checked| checked.probe)
-        .is_none_or(|probe| probe.provider)
+/// Whether a UI Automation tell's element in `window` is native, as Core's
+/// backend cache judges it, the probe the tell carried recorded there at
+/// its arrival: a window read through MSAA, by its class or its newest
+/// probe, has its UI Automation events dropped, as NVDA's
+/// `isNativeUIAElement` drops them.
+fn native(cx: &Cx<Entries>, tell: &Event, window: &RequestWindow) -> bool {
+    cx.backend()
+        .judge(Judged::Uia, &window.judged(), tell.at_us, cx.now_us())
+        != Judgement::Drop
 }
 
 /// The text of `value`, a property read, when it is text.

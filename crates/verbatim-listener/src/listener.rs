@@ -2025,8 +2025,8 @@ mod tests {
     /// NVDA's lists and has no provider, so the check makes no other call,
     /// as NVDA's handler returns at a window read through MSAA; its element
     /// is kept behind the token the tell names. A second focus on the same
-    /// element finds the probe's answer in the thread's record and makes no
-    /// call past the walk.
+    /// element finds the probe in the thread's record and makes no probe
+    /// call, and its tell carries the recorded probe.
     #[test]
     fn a_focus_is_told_from_its_check_thread_with_what_its_check_found() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -2081,10 +2081,11 @@ mod tests {
                 runtime_id,
             }
         );
+        // The second tell carries the probe the first made, which stands.
         assert_eq!(
             second.checked,
             Some(verbatim_model::tell::Checked {
-                probe: None,
+                probe: Some(probe),
                 keyboard_focus: Some(verbatim_model::tell::Read::Answered(false)),
                 kept: vec![(ElementToken(1), verbatim_model::tell::Read::Answered(false))],
                 previous_sibling: None,

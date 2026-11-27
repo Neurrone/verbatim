@@ -525,12 +525,11 @@ pub fn run(
         read_at_us,
         carets: Vec::new(),
     };
-    let texts = selection_texts(steps, &answer.steps, first);
     let outcomes = steps
         .iter()
         .zip(answer.steps)
         .enumerate()
-        .map(|(index, (step, ran))| made.outcome(index, step, ran, (&texts, began_us)))
+        .map(|(index, (step, ran))| made.outcome(index, step, ran, began_us))
         .collect();
     FusedAnswer {
         outcomes,
@@ -757,29 +756,6 @@ fn fusable_in_poll(step: &Step, node: NodeId) -> bool {
     on_node && fusable && condition
 }
 
-/// The selection text a later `CompareSelection` read for each `Caret` of
-/// the run, by the caret's index in the run.
-fn selection_texts(steps: &[Step], ran: &[Ran], first: usize) -> Vec<Option<Vec<u16>>> {
-    let mut texts = vec![None; steps.len()];
-    for (step, ran) in steps.iter().zip(ran) {
-        if let (
-            Op::CompareSelection { after, .. },
-            Ran::Done(Found::CompareSelection(Compared {
-                selection_text: Some(text),
-                ..
-            })),
-        ) = (&step.op, ran)
-            && let Some(slot) = after
-                .index()
-                .checked_sub(first)
-                .and_then(|index| texts.get_mut(index))
-        {
-            *slot = Some(text.clone());
-        }
-    }
-    texts
-}
-
 /// A `Caret`'s caret and selection, as the source's positions.
 type CaretHeld = (UiaPos, Option<(UiaPos, UiaPos)>);
 
@@ -799,15 +775,8 @@ struct Made<'m, 'n> {
 
 impl Made<'_, '_> {
     /// The outcome of `step`, at `index` in the run, that ran as `ran`;
-    /// `texts` holds the selections' texts later comparisons read, and
     /// `began_us` when the run began.
-    fn outcome(
-        &mut self,
-        index: usize,
-        step: &Step,
-        ran: Ran,
-        (texts, began_us): (&[Option<Vec<u16>>], u64),
-    ) -> StepOutcome {
+    fn outcome(&mut self, index: usize, step: &Step, ran: Ran, began_us: u64) -> StepOutcome {
         self.carets.push(None);
         let done = match (&step.op, ran) {
             (_, Ran::TimedOut | Ran::Failed) => return StepOutcome::Failed,
@@ -815,9 +784,7 @@ impl Made<'_, '_> {
             (_, Ran::Unrun(Unrun::NotThere(missing))) => return StepOutcome::NotThere(missing),
             (_, Ran::Unrun(Unrun::Skipped)) => return StepOutcome::Skipped,
             (_, Ran::Gone) => return StepOutcome::NotThere(Missing::Node(self.node)),
-            (Op::Caret { .. }, Ran::Done(Found::Caret(found))) => {
-                self.caret(index, &found, texts.get(index).cloned().flatten())
-            }
+            (Op::Caret { .. }, Ran::Done(Found::Caret(found))) => self.caret(index, &found),
             (
                 Op::ReadText {
                     unit,
@@ -859,8 +826,8 @@ impl Made<'_, '_> {
             (Op::ReadColours { .. }, Ran::Done(Found::Colours(rows))) => {
                 Ok(Done::ReadColours(colour_rows(rows)))
             }
-            (Op::CompareSelection { before, .. }, Ran::Done(Found::CompareSelection(compared))) => {
-                Ok(self.compared(before, compared))
+            (Op::CompareSelection { .. }, Ran::Done(Found::CompareSelection(compared))) => {
+                Ok(Self::compared(compared))
             }
             (Op::Select { .. }, Ran::Done(Found::Select)) => {
                 Ok(Done::Select(Selected { began_us }))
@@ -893,15 +860,12 @@ impl Made<'_, '_> {
         later: &[Step],
         (ran, began_us): (Vec<Ran>, u64),
     ) -> Vec<StepOutcome> {
-        let texts = selection_texts(later, &ran, self.first);
         let mut outcomes = vec![StepOutcome::Done(Done::WaitForCaret(waited))];
         for (index, (step, ran)) in later.iter().zip(ran).enumerate() {
             let outcome = match step.gate(&outcomes) {
                 // A comparison was decided where the calls were made: the
                 // step's outcome is as it ran.
-                Ok(Gate::Run | Gate::Compare { .. }) => {
-                    self.outcome(index, step, ran, (&texts, began_us))
-                }
+                Ok(Gate::Run | Gate::Compare { .. }) => self.outcome(index, step, ran, began_us),
                 Ok(Gate::Skip) => {
                     self.carets.push(None);
                     StepOutcome::Skipped
@@ -919,12 +883,11 @@ impl Made<'_, '_> {
     }
 
     /// A `Caret`'s result: its points held, and its read held as the next
-    /// selection baseline with the selection's `text` when read.
+    /// selection baseline.
     fn caret(
         &mut self,
         index: usize,
         found: &verbatim_uia_rops::batch::CaretFound,
-        text: Option<Vec<u16>>,
     ) -> TextResult<Done> {
         let caret = UiaPos::new(&found.caret, Endpoint::Start, true)?;
         let selection = match &found.selection {
@@ -954,7 +917,7 @@ impl Made<'_, '_> {
                     end: TextPosition::at(held.end),
                 },
             };
-            (ends, report, text)
+            (ends, report)
         });
         let held = self
             .anchors
@@ -1127,10 +1090,10 @@ impl Made<'_, '_> {
         }))
     }
 
-    /// A `CompareSelection`'s result: the changes, the whole new selection
-    /// (read whole by its range when the program's read was cut), and
-    /// whether the text the baseline selected changed since it was read.
-    fn compared(&self, before: &Before, compared: Compared) -> Done {
+    /// A `CompareSelection`'s result: the changes, and the whole new
+    /// selection (read whole by its range when the program's read was
+    /// cut).
+    fn compared(compared: Compared) -> Done {
         let changes = compared
             .changes
             .iter()
@@ -1142,27 +1105,11 @@ impl Made<'_, '_> {
             .selection_text
             .map(|units| change_of(true, &units))
             .filter(|selected| !selected.text.is_empty());
-        // The text the baseline selected as it was read, when it was held
-        // outside the run and selected something.
-        let was = match before {
-            Before::SelectionOf(place) if place.index() >= self.first => None,
-            before => baseline_anchor(before, self.earlier)
-                .and_then(|anchor| self.anchors.held_read(anchor))
-                .and_then(|read| {
-                    let kept = read.kept_selection();
-                    (!kept.collapsed).then_some(kept.text).flatten()
-                }),
-        };
-        let text_changed = match (was, compared.previous_text) {
-            (Some(was), Some(now)) => change_of(false, &now).text != change_of(false, &was).text,
-            _ => false,
-        };
         Done::CompareSelection(SelectionCompared {
             difference: SelectionDifference {
                 changes,
                 new_selection,
             },
-            text_changed,
         })
     }
 }

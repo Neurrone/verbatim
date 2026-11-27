@@ -14,12 +14,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{Probe, WindowVerdict};
+use verbatim_model::request::{Probe, WindowVerdict, probe_stands};
 use verbatim_model::{Backend, WindowHandle};
-
-/// How long a probe's verdict is in force from the probe's start, NVDA's
-/// cache period.
-pub(crate) const PROBE_LIFE_US: u64 = 500_000;
 
 /// A window as the cache keys it: the window and the thread that owns it,
 /// so that a reused handle is a new window.
@@ -41,7 +37,8 @@ pub(crate) struct JudgedWindow {
     pub(crate) by_class: Option<Backend>,
 }
 
-/// A probe's verdict, kept.
+/// A probe's verdict, kept for
+/// [`PROBE_LIFE_US`](verbatim_model::request::PROBE_LIFE_US) from its start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Probed {
     backend: Backend,
@@ -122,7 +119,7 @@ impl BackendCache {
         window.by_class.or_else(|| {
             self.probed
                 .get(&window.key)
-                .filter(|probed| probed.began_us.saturating_add(PROBE_LIFE_US) >= at_us)
+                .filter(|probed| probe_stands(probed.began_us, at_us))
                 .map(|probed| probed.backend)
         })
     }
@@ -161,6 +158,7 @@ impl BackendCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verbatim_model::request::PROBE_LIFE_US;
 
     const KEY: WindowKey = WindowKey {
         handle: 5,

@@ -190,7 +190,10 @@ pub enum Read<T> {
 /// delivery, making the calls NVDA's handler for that event makes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checked {
-    /// The provider probe of the nearest window, when the check probed it.
+    /// The provider probe of the nearest window that stands, when its
+    /// class is on neither of NVDA's lists: the one the check made, or the
+    /// one its thread made within the probe's life, carried again so that
+    /// Core holds it whichever tells reach it.
     pub probe: Option<Probe>,
     /// Whether the element has the keyboard focus, when the event's
     /// handler reads it.

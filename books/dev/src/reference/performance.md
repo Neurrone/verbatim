@@ -1159,10 +1159,10 @@ character with nothing selected, then "al" selected from the caret.
   (`caret_tell_reads_cost_exactly`).
   The caret is the selection's start, so where the selection starts costs
   nothing more. When the last
-  selection held something, what its ends now hold is read too, up to 513
-  units, so an edit is said in general terms (`docs/parity/text.md`,
-  "TextInfo-equivalent layer"); a longer text is compared by its first
-  513 units and its length.
+  selection held something, what its ends now hold is not read: Core
+  judges whether the text changed from its own text facts, so a
+  selection extended costs only the comparison and the texts it speaks
+  (`uia_text_requests_cost_exactly`, "UIA selection extended").
 
 ### A caret key's starting read
 
@@ -1172,15 +1172,16 @@ its turn and its starting read
 caret and the key's unit (`starting_reads_cost_exactly`).
 
 - Today: 1 UIA call remotely, the starting batch's `Caret` and the
-  caret's line in one program; 9 classically, each step's calls; 5
-  window messages in a Win32 edit control.
+  caret's line in one program; 9 classically, each step's calls; in a
+  Win32 edit control the caret's messages and the line's, read as NVDA's
+  `_getLineOffsets` reads it (`starting_reads_cost_exactly`).
 - Backspace's and Control+Backspace's, which read the character or the
   word around the character before the caret, the text the key would
   delete: 1 UIA call remotely, the unit read in the same program; 17 and
   20 classically, the caret's copy moved back a character, expanded, and
-  its text and its part before the caret read; 20 window messages in a
-  Win32 edit control, the character before the caret and the unit around
-  it each found from its line's messages (`starting_reads_cost_exactly`).
+  its text and its part before the caret read; in a Win32 edit control,
+  the character before the caret and the unit around it each found from
+  its line's messages (`starting_reads_cost_exactly`).
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals, measured with the read before each key
@@ -1561,15 +1562,17 @@ Say-all's batch is timed under "Say-all, UIA".
 
 ### A caret move, Win32 edit control
 
-- Minimum: 5 window messages: `EM_GETSEL`, `EM_LINEFROMCHAR`, two
-  `EM_LINEINDEX`, and `EM_GETLINE`. A rich edit control from version 2.0
-  takes the same with `EM_EXGETSEL`, `EM_EXLINEFROMCHAR` and
-  `EM_GETTEXTRANGE`.
-- Today: 6: the selection is read again before answering, because read by
+- Minimum: the selection (`EM_GETSEL`), the line as NVDA's
+  `_getLineOffsets` reads it (`EM_LINEFROMCHAR`, `EM_LINEINDEX`,
+  `EM_LINELENGTH`, `EM_LINEFROMCHAR` at its end and the next line's
+  `EM_LINEINDEX`, the text's length at the last line), and `EM_GETLINE`.
+  A rich edit control from version 2.0 takes the same with
+  `EM_EXGETSEL`, `EM_EXLINEFROMCHAR` and `EM_GETTEXTRANGE`.
+- Today: one more, the selection read again before answering, because read by
   parts the caret can be read before the control handles the key and its
   line after (a Backspace said nothing); when the two differ, the
   control's caret event answers instead.
-- Target: 5, which needs a message reading the caret and its line together;
+- Target: one fewer, which needs a message reading the caret and its line together;
   none exists.
 
 A word in a rich edit control from version 2.0 is found with two

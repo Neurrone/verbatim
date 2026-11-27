@@ -15,8 +15,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
-
 use verbatim_model::{CaretReport, SelectionChange, TextAnchor};
 
 use super::{
@@ -46,7 +44,6 @@ fn read_caret<S: TextSource>(
                 Some((line, offset, read.formats)),
                 Some(read.selection_start),
             ),
-            None,
         )?;
         return Ok(CaretFound {
             state: read.state,
@@ -55,7 +52,7 @@ fn read_caret<S: TextSource>(
         });
     }
     let state = source.caret()?;
-    let report = report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
+    let report = report_for(source, anchors, (&state, read_at_us), (None, None))?;
     Ok(CaretFound {
         state,
         report,
@@ -73,9 +70,9 @@ struct CaretFound<P> {
     selection_text: Option<Vec<u16>>,
 }
 
-/// A selection a batch's caret read holds: its two ends, how they were
-/// reported, and its text when read.
-pub type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection, Option<Vec<u16>>);
+/// A selection a batch's caret read holds: its two ends, and how they were
+/// reported.
+pub type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection);
 
 impl<P: Clone> NodeText<'_, P> {
     /// Holds the node's last read, just made, under a new id, recorded as
@@ -109,9 +106,8 @@ impl<P: Clone> NodeText<'_, P> {
 
     /// Holds a batch's caret read, begun at `read_at_us`, as the node's
     /// last read and under a new id, the next selection baseline: the
-    /// caret, and the selection's two ends with how they were reported and
-    /// its text when a step of the batch read it. It holds no line, which a
-    /// batch reads by a step of its own.
+    /// caret, and the selection's two ends with how they were reported. It
+    /// holds no line, which a batch reads by a step of its own.
     pub fn hold_caret(
         &mut self,
         caret: P,
@@ -120,10 +116,9 @@ impl<P: Clone> NodeText<'_, P> {
     ) -> TextAnchor {
         let read = super::LastRead {
             caret: super::Slot::new(caret),
-            selection: selection.map(|((start, end), report, text)| super::ReadSelection {
+            selection: selection.map(|((start, end), report)| super::ReadSelection {
                 start: super::Slot::new(start),
                 end: super::Slot::new(end),
-                text: text.map(Arc::from),
                 report,
             }),
             line: None,
@@ -215,7 +210,7 @@ pub fn held_after_move<S: TextSource>(
     let kept_now = anchors.anchors.last.as_ref().map(|last| last.read_at_us);
     if kept_now.is_none() || kept_now == kept_before {
         let state = source.caret()?;
-        report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
+        report_for(source, anchors, (&state, read_at_us), (None, None))?;
     }
     anchors.hold_last()
 }

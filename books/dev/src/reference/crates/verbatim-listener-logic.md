@@ -90,9 +90,12 @@ the tell carries, and the record keeps, is the raw probe's answer with
 NVDA's checks after it (`listener_provider`, judged with the classes
 read): a list view's provider counts only from Windows Forms. A window
 on one of NVDA's lists is not probed, nor one whose probe in the
-thread's `ProbeRecord` began within `PROBE_RECORD_US` (half a second),
-the record keeping whether a provider answered: the record only spares
-a probe call, since Core recorded the same probe from the earlier tell.
+thread's `ProbeRecord` began within the model's `PROBE_LIFE_US` (half a
+second, the one figure Core's backend cache keeps a verdict for). The
+record only spares a probe call: a tell carries the probe that stands,
+made now or recorded, since the listener's writer can merge away the
+earlier tell that carried it, and Core keeps the newest probe by its
+start, so a probe told twice is one.
 A window read through MSAA, by a list, the probe or the record, does
 not end the check: Core's backend cache is the one owner of a window's
 verdict and judges NVDA's native-element test, so the keyboard-focus

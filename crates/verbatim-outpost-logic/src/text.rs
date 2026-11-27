@@ -227,7 +227,6 @@ mod tests {
             selection: selection.map(|(start, end)| ReadSelection {
                 start,
                 end,
-                text: None,
                 report: CaretSelection {
                     range: verbatim_model::Selection {
                         start: position,

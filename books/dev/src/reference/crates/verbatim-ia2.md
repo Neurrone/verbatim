@@ -699,7 +699,12 @@ executor's list, each step run alone, by calls:
   `EditTextInfo` forces both; the plain edit control alone answers
   `TextSource::measure`, so a `Locate` there answers the offset and
   length, and a rich edit's the screen point, as NVDA reads a rich edit
-  through its text object model). A node has text when it is an edit
+  through its text object model; a line is read as NVDA's
+  `_getLineOffsets` reads it, branch for branch, its end widened past
+  the offset and taken to the next line's start, the text's length read
+  once per request, so a text changing between the messages gives the
+  line NVDA would read: `docs/parity/text.md`, "A standard edit
+  control's line"). A node has text when it is an edit
   control's client area (`text::edit_version`); any
   other answers no text. The outpost's `TextResolve` gives a node's ids
   and a copy of its text facts, which it commits after the read.

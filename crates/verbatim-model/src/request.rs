@@ -126,6 +126,21 @@ pub struct Probe {
     pub began_us: u64,
 }
 
+/// How long a probe's answer stands from the probe's start, in
+/// microseconds: NVDA's half-second cache period
+/// (`docs/parity/backends.md`, "Dual-stack MSAA+UIA with per-window
+/// arbitration"). Core's backend
+/// cache keeps a verdict this long, and a listener's check thread makes
+/// no second probe of a window within it.
+pub const PROBE_LIFE_US: u64 = 500_000;
+
+/// Whether the answer of a probe begun at `began_us` stands at `at_us`:
+/// it began no earlier than [`PROBE_LIFE_US`] before.
+#[must_use]
+pub fn probe_stands(began_us: u64, at_us: u64) -> bool {
+    began_us.saturating_add(PROBE_LIFE_US) >= at_us
+}
+
 /// An ancestor Core already knows, at which a walk up the ancestor chain
 /// stops: one of the committed focus's ancestors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

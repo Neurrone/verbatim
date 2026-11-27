@@ -33,7 +33,7 @@
 //!   does not: Core's backend cache is the one owner of a window's
 //!   verdict and judges NVDA's native-element test (887 to 899), so the
 //!   check makes the keyboard-focus reads whatever it found and carries
-//!   any probe it made;
+//!   the probe that stands;
 //! - an element selected, a window opened, a property change and a
 //!   progress bar's range value change, NVDA's automation-event and
 //!   property-change handlers: the walk and the probe
@@ -49,23 +49,19 @@
 //! [`listener_provider`]: a list view's provider counts only from Windows
 //! Forms, and a console's with no check, the listener's recorded limit.
 //!
-//! The probe record keeps each probe's answer with when it began, only to
-//! skip repeating a probe call within half a second: a guess that can only
-//! cost calls, since Core recorded the same probe from the earlier tell at
-//! its arrival, so Core never lacks a verdict the record had.
+//! The probe record keeps each probe the thread made, only to skip
+//! repeating a probe call within half a second. A tell carries the probe
+//! that stands, whether made now or kept, so that Core holds it whichever
+//! tells reach it: the writer's merge can drop the earlier tell that
+//! carried it (`Waiting::merged` in the listener).
 
 use std::collections::BTreeMap;
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::Probe;
+use verbatim_model::request::{Probe, probe_stands};
 use verbatim_model::tell::{Checked, ElementToken, Read};
 use verbatim_reader_rules::class::{ClassVerdict, WindowClasses, class_verdict, listener_provider};
-
-/// How long an answer in a check thread's probe record stands, in
-/// microseconds: NVDA keeps its `isUIAWindow` answer for half a second
-/// (`UIAHandler/__init__.py` 1373).
-pub const PROBE_RECORD_US: u64 = 500_000;
 
 /// The handler whose calls an event kind's check makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,34 +146,33 @@ pub enum Walked {
     NotWalked,
 }
 
-/// A check thread's record of the probes it made: when each window's last
-/// probe began and whether a provider answered, as NVDA's
-/// `UIAWindowHandleCache` keeps its answers (`UIAHandler/__init__.py` 1368
-/// to 1381). A probe begun within [`PROBE_RECORD_US`] stands, and the
-/// window is not probed again.
+/// A check thread's record of the probes it made, each window's last with
+/// its checked answer, as NVDA's `UIAWindowHandleCache` keeps its answers
+/// (`UIAHandler/__init__.py` 1368 to 1381). A probe begun within
+/// [`verbatim_model::request::PROBE_LIFE_US`] stands, and the window is
+/// not probed again.
 #[derive(Debug, Default)]
 pub struct ProbeRecord {
-    probes: BTreeMap<isize, (u64, bool)>,
+    probes: BTreeMap<isize, Probe>,
 }
 
 impl ProbeRecord {
-    /// Whether a provider answered the probe of `window` the record holds
-    /// begun within the last [`PROBE_RECORD_US`] at `now_us`; `None` when
-    /// no such probe stands.
+    /// The probe of `window` the record holds that stands at `now_us`;
+    /// `None` when none does.
     #[must_use]
-    pub fn standing(&self, window: isize, now_us: u64) -> Option<bool> {
+    pub fn standing(&self, window: isize, now_us: u64) -> Option<Probe> {
         self.probes
             .get(&window)
-            .filter(|&&(began, _)| now_us.saturating_sub(began) <= PROBE_RECORD_US)
-            .map(|&(_, provider)| provider)
+            .filter(|probe| probe_stands(probe.began_us, now_us))
+            .copied()
     }
 
-    /// Records a probe of `window` begun at `began_us`, answered
-    /// `provider`, letting go of every probe that no longer stands.
-    fn record(&mut self, window: isize, began_us: u64, provider: bool) {
+    /// Records `probe` of `window`, letting go of every probe that no
+    /// longer stands.
+    fn record(&mut self, window: isize, probe: Probe) {
         self.probes
-            .retain(|_, &mut (began, _)| began_us.saturating_sub(began) <= PROBE_RECORD_US);
-        self.probes.insert(window, (began_us, provider));
+            .retain(|_, kept| probe_stands(kept.began_us, probe.began_us));
+        self.probes.insert(window, probe);
     }
 }
 
@@ -312,16 +307,21 @@ pub fn check(
     }
     calls.calling(Call::Classes(window));
     let classes = calls.classes(window);
-    if class_verdict(&classes) == ClassVerdict::Unknown && record.standing(window, now_us).is_none()
-    {
-        calls.calling(Call::Probe(window));
-        let raw = calls.probe(window);
-        let probe = Probe {
-            provider: listener_provider(&classes, raw.provider),
-            ..raw
-        };
-        record.record(window, probe.began_us, probe.provider);
-        found.checked.probe = Some(probe);
+    if class_verdict(&classes) == ClassVerdict::Unknown {
+        // The tell carries the probe that stands, kept or made now: Core
+        // takes the newest by its start, so a probe told twice is one.
+        found.checked.probe = Some(if let Some(standing) = record.standing(window, now_us) {
+            standing
+        } else {
+            calls.calling(Call::Probe(window));
+            let raw = calls.probe(window);
+            let probe = Probe {
+                provider: listener_provider(&classes, raw.provider),
+                ..raw
+            };
+            record.record(window, probe);
+            probe
+        });
     }
     // Whatever the verdict found, the check goes on: Core judges the
     // native-element test. The automation-event handler judges acceptance
@@ -664,8 +664,9 @@ mod tests {
 
     /// A probe that finds no provider is carried, and the focus's checks go
     /// on to the kept elements' and its own keyboard focus; the record of
-    /// that probe within half a second only spares the next check the
-    /// probe call, as Core recorded the probe from the earlier tell.
+    /// that probe within half a second spares the next check the probe
+    /// call, and its tell carries the recorded probe, as the writer's merge
+    /// can drop the earlier tell.
     #[test]
     fn a_window_the_probe_finds_read_through_msaa_still_has_its_keyboard_focus_read() {
         let mut record = ProbeRecord::default();
@@ -718,7 +719,12 @@ mod tests {
         assert_eq!(
             told,
             Checked {
-                probe: None,
+                probe: Some(Probe {
+                    window: WindowHandle(5),
+                    thread: 7,
+                    provider: false,
+                    began_us: 1_000,
+                }),
                 keyboard_focus: Some(Read::Answered(false)),
                 kept: vec![(ElementToken(4), Read::Answered(false))],
                 previous_sibling: None,
@@ -727,11 +733,17 @@ mod tests {
     }
 
     /// The record of a probe that found a provider has the focus's checks
-    /// go on with no probe made.
+    /// go on with no probe made, and the tell carries the recorded probe.
     #[test]
     fn a_recorded_provider_goes_on_with_no_probe() {
         let mut record = ProbeRecord::default();
-        record.record(5, 1_000, true);
+        let recorded = Probe {
+            window: WindowHandle(5),
+            thread: 7,
+            provider: true,
+            began_us: 1_000,
+        };
+        record.record(5, recorded);
         let check = CheckFacts::new(EventKind::UiaFocus, false, Vec::new());
         let (calls, _, told, _) = run(&check, &mut record, 1_200, |call| match call {
             Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
@@ -747,7 +759,7 @@ mod tests {
                 Call::KeyboardFocus
             ]
         );
-        assert_eq!(told.probe, None);
+        assert_eq!(told.probe, Some(recorded));
         assert_eq!(told.keyboard_focus, Some(Read::Answered(true)));
     }
 
@@ -791,12 +803,17 @@ mod tests {
                 }),
                 "{raw}"
             );
-            assert_eq!(record.standing(5, 1_000), Some(counted), "{raw}");
+            assert_eq!(
+                record.standing(5, 1_000).map(|probe| probe.provider),
+                Some(counted),
+                "{raw}"
+            );
         }
     }
 
     /// A probe begun within the last half second stands: the window is
-    /// not probed again until it has passed, as NVDA's record keeps it.
+    /// not probed again until it has passed, as NVDA's record keeps it,
+    /// and each tell within it carries the standing probe.
     #[test]
     fn a_probe_within_half_a_second_stands_for_the_next_check() {
         let mut record = ProbeRecord::default();
@@ -813,7 +830,7 @@ mod tests {
             )
         };
         assert_eq!(probes(&mut record, 1_000), (true, Some(1_000)));
-        assert_eq!(probes(&mut record, 501_000), (false, None));
+        assert_eq!(probes(&mut record, 501_000), (false, Some(1_000)));
         assert_eq!(probes(&mut record, 501_001), (true, Some(501_001)));
     }
 

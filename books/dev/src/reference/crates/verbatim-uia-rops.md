@@ -662,9 +662,11 @@ typed by the caller, so the program spends no instructions on testing
 types. The annotation types are asked of the stretches only when the
 span has some. A selection that moved is compared inside the provider by
 the text protocol's rule, each change with its text up to its limit, and
-the texts compared are read up to `MAX_COMPARED_TEXT` (513 UTF-16 code
-units, one more than the 512 characters from which a selection is
-spoken as a count).
+the new selection's text is read up to `MAX_COMPARED_TEXT` (513 UTF-16
+code units, one more than the 512 characters from which a selection is
+spoken as a count); nothing is read of what the old selection's ends
+hold now, since Core judges whether the text changed from its own text
+facts.
 
 Classically the same reads are made one call at a time, a stretch's
 attributes together in one `IUIAutomationTextRange3::GetAttributeValues`

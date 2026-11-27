@@ -96,7 +96,7 @@ pub(crate) async fn run(
     let Some(window) = announcement.window() else {
         return;
     };
-    if !native(tell) {
+    if !native(&cx, tell, &window) {
         return;
     }
     let Some(committed) = cx.facts().versions.live().cloned() else {

@@ -702,13 +702,6 @@ fn compared(
         (old_collapsed, new_collapsed),
         MAX_CHANGE_TEXT,
     )?;
-    let previous_text = if old_collapsed {
-        None
-    } else {
-        let between = old.clone_range()?;
-        between.move_endpoint_to(Endpoint::End, &old, old_end)?;
-        Some(between.text(MAX_COMPARED_TEXT)?)
-    };
     let selection_text = match &after.selection {
         Some((selection, ..)) => Some(selection.text(MAX_COMPARED_TEXT)?),
         None => None,
@@ -716,7 +709,6 @@ fn compared(
     Ok(Compared {
         changes,
         selection_text,
-        previous_text,
     })
 }
 

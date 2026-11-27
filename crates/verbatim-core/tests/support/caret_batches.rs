@@ -351,7 +351,6 @@ pub fn answer(batch: &Batch, facts: &Facts) -> Vec<StepOutcome> {
                 (Some(difference), _) => {
                     StepOutcome::Done(Done::CompareSelection(SelectionCompared {
                         difference: difference.clone(),
-                        text_changed: false,
                     }))
                 }
                 (None, Before::Baseline(anchor)) => StepOutcome::NotThere(Missing::Anchor(*anchor)),

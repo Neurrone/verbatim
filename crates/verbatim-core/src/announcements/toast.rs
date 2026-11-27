@@ -23,7 +23,10 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: K
     let Some(facts) = window_facts(tell) else {
         return;
     };
-    if facts.window.class != TOAST_WINDOW || !native(tell) {
+    let Some(window) = announcement.window() else {
+        return;
+    };
+    if facts.window.class != TOAST_WINDOW || !native(&cx, tell, &window) {
         return;
     }
     let id = ToastId(kept.runtime_id.clone());
@@ -35,9 +38,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: K
     {
         return;
     }
-    let Some(window) = announcement.window() else {
-        return;
-    };
     let mut batch = cx.batch(|| ());
     let read = batch.read(
         On::kept(kept.listener, kept.token, false),

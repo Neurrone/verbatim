@@ -728,9 +728,6 @@ pub struct Compared {
     /// The selection's text now, up to [`crate::MAX_COMPARED_TEXT`], when
     /// something is selected.
     pub selection_text: Option<Vec<u16>>,
-    /// The text between the earlier selection's ends as they are now, up to
-    /// [`crate::MAX_COMPARED_TEXT`], when it held something.
-    pub previous_text: Option<Vec<u16>>,
 }
 
 /// A segment's answer.

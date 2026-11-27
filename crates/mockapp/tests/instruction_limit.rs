@@ -517,7 +517,7 @@ fn range_selections_execute_exactly() {
         .collect();
     assert_eq!(changes, [(true, "alpha".to_owned())]);
     fixture.app.quit();
-    assert_eq!(press, [123, 109], "the review copy's first press");
+    assert_eq!(press, [123, 106], "the review copy's first press");
     assert!(press.iter().all(|&count| count < LIMIT / 2));
 }
 
@@ -1556,10 +1556,10 @@ fn batch_text_shapes_execute_exactly() {
             // comparison one cap, which the outpost never did: the
             // program builder's own caps differ, so each takes its own
             // constant (2026-11-22).
-            vec![4482],
+            vec![4479],
             vec![149],
             vec![150],
-            vec![123, 109],
+            vec![123, 106],
             vec![58],
             vec![757],
         ],

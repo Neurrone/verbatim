@@ -43,13 +43,10 @@ pub const ANNOTATION_GRAMMAR_ERROR: i32 = 60002;
 /// of prose has, and a bound on the program's work for one that has more.
 pub const MAX_RUNS: u32 = 64;
 
-/// The most UTF-16 code units read of a selection's text kept to compare
-/// (a `CompareSelection`'s selection text) and of what an old selection's ends
-/// hold now (its previous text): one more than the 512
-/// characters from which a selection is spoken as a count. The two are
-/// compared only to tell whether the text changed, which typing over,
-/// cutting or pasting does in the first characters or the length, so a
-/// longer text is compared by its first 513 units and by being longer.
+/// The most UTF-16 code units a `CompareSelection` reads at first of the
+/// new selection's text: one more than the 512 characters from which a
+/// selection is spoken as a count. A selection whose read reaches it is
+/// read again whole by its range, up to a copy's limit.
 pub const MAX_COMPARED_TEXT: i32 = 513;
 
 /// A position: one end of a text range.

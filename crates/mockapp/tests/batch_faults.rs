@@ -163,9 +163,8 @@ fn a_read_failing_after_the_act_does_not_repeat_it() {
 fn a_lost_answer_reruns_the_act() {
     let mut fixture = Fixture::start();
     let whole = r#"caret (0, 0) selection Some(("(0, 17)", true))"#;
-    let expected = format!(
-        "{whole}\nselected\n{whole}\ncompared [] Some(\"alpha beta\\ngamma\\n\") Some(\"alpha beta\\ngamma\\n\")\n"
-    );
+    let expected =
+        format!("{whole}\nselected\n{whole}\ncompared [] Some(\"alpha beta\\ngamma\\n\")\n");
     let rule = ("caret doc 3", Some(expected.as_str()));
     fixture.fails(
         (Fault::ProgramAnswerLost, 0),

@@ -3170,6 +3170,54 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         expected,
         0,
     );
+
+    // Shift+Right extending a selection, as a caret tell's read compares
+    // it: "alp" selected and held as the baseline, then "alpha", read by a
+    // `Caret` and compared with the baseline's selection. The comparison
+    // reads what became selected and the new selection, and nothing of the
+    // text under the old selection, which no one reads.
+    common::apply(&mut app, hwnd, "caret doc 0 3");
+    let (held, _) = text(vec![Op::Caret {
+        subject: NOTES,
+        adopt: None,
+    }]);
+    let Some(StepOutcome::Done(Done::Caret(baseline))) = held.first() else {
+        panic!("the baseline's caret, not {held:?}");
+    };
+    let baseline = baseline.held;
+    common::apply(&mut app, hwnd, "caret doc 0 5");
+    let (extended, cost) = text(vec![
+        Op::Caret {
+            subject: NOTES,
+            adopt: None,
+        },
+        Op::CompareSelection {
+            subject: NOTES,
+            before: Before::Baseline(baseline),
+            after: Place(0),
+        },
+    ]);
+    let Some(StepOutcome::Done(Done::CompareSelection(compared))) = extended.get(1) else {
+        panic!("the selections compared, not {extended:?}");
+    };
+    let changes: Vec<(bool, &str)> = compared
+        .difference
+        .changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str()))
+        .collect();
+    assert_eq!(changes, [(true, "ha")]);
+    let expected = if remote {
+        calls(1, 0, 0)
+    } else {
+        calls(16, 0, 0)
+    };
+    ratchet.check(
+        &format!("UIA selection extended, {way}"),
+        &cost,
+        expected,
+        0,
+    );
     app.quit();
 }
 
@@ -3353,9 +3401,9 @@ fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
 /// worker runs a run of text steps (`verbatim_outpost::text::fused::run`),
 /// with `verbatim_uia_rops`'s counting on: mockapp's "Notes" document, the
 /// caret at `caret`'s command, its `Caret`, its line read from it, and its
-/// selection compared with the baseline a `Caret` held before it at the
-/// text's start. The instructions its one program executed.
-fn caret_tell_program(caret: &str) -> u32 {
+/// selection compared with the baseline a `Caret` held before it at
+/// `baseline`'s command. The instructions its one program executed.
+fn caret_tell_program(baseline: &str, caret: &str) -> u32 {
     use verbatim_model::batch::{
         Before, Done, Op, Place, Point, PointOf, Step, StepOutcome, Subject,
     };
@@ -3373,7 +3421,7 @@ fn caret_tell_program(caret: &str) -> u32 {
         subject: subject.clone(),
         adopt: None,
     });
-    common::apply(&mut app, hwnd, "caret doc 0");
+    common::apply(&mut app, hwnd, baseline);
     let held = verbatim_outpost::text::fused::run(
         &uia,
         (node, &mut source, &mut anchors),
@@ -3433,10 +3481,12 @@ fn caret_tell_program(caret: &str) -> u32 {
 /// step's calls in turn, 18: the caret, the selection and whether its
 /// start is at the text's start, the line, then the comparison's (the read
 /// the batch replaced shared its reads of the caret among them, 19). The
-/// program's instructions, under UI Automation's limit of 10,000: 148 for
+/// program's instructions, under UI Automation's limit of 10,000: 145 for
 /// the selection "alpha" in a line of plain text, compared with a baseline
-/// at the text's start, and 130 for the caret alone moved inside the line
-/// (the purpose-built program the batch replaced executed 90 and 48).
+/// at the text's start, 127 for the caret alone moved inside the line
+/// (the purpose-built program the batch replaced executed 90 and 48), and
+/// 151 for "alp" extended to "alpha", which reads nothing of what the old
+/// selection's ends hold.
 fn caret_tell_reads_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -3453,11 +3503,12 @@ fn caret_tell_reads_cost_exactly() {
     }
     assert_eq!(
         [
-            caret_tell_program("caret doc 0 5"),
-            caret_tell_program("caret doc 3")
+            caret_tell_program("caret doc 0", "caret doc 0 5"),
+            caret_tell_program("caret doc 0", "caret doc 3"),
+            caret_tell_program("caret doc 0 3", "caret doc 0 5"),
         ],
-        [148, 130],
-        "the caret tell's read's program, a selection and the caret alone"
+        [145, 127, 151],
+        "the caret tell's read's program, a selection, the caret alone and a selection extended"
     );
     ratchet.finish();
 }
@@ -3475,8 +3526,9 @@ fn caret_tell_reads_cost_exactly() {
 /// the word and the character before the caret (the starting read the
 /// batch replaced read the caret's line with it in 8, and the unit in 15).
 /// Through an edit control's window messages, the caret's, then the
-/// line's, then the unit's, each found from its line's messages: 5, and
-/// 20 with a unit before the caret.
+/// line's, then the unit's, each found from its line's messages, a line
+/// read as NVDA's `_getLineOffsets` reads it (its index, its length, and
+/// whether its end lies on it): 8, and 29 with a unit before the caret.
 #[expect(
     clippy::too_many_lines,
     reason = "each text's cases, then the edit control's"
@@ -3576,16 +3628,16 @@ fn starting_reads_cost_exactly() {
         },
     );
     for (operation, read, expected) in [
-        ("Edit control starting read", arrow, calls(0, 0, 5)),
+        ("Edit control starting read", arrow, calls(0, 0, 8)),
         (
             "Edit control Control+Backspace starting read",
             word,
-            calls(0, 0, 20),
+            calls(0, 0, 29),
         ),
         (
             "Edit control Backspace starting read",
             before,
-            calls(0, 0, 20),
+            calls(0, 0, 29),
         ),
     ] {
         let measured =
@@ -4394,8 +4446,9 @@ fn text_field_focuses_cost_exactly() {
     .expect("mockapp's edit control");
     // The control's window is judged by its class, NVDA's `Edit`, which
     // Core's request carries, so no probe is made, where the outpost once
-    // probed it, one window message; its five messages are the control's
-    // text and caret. The run meets the root Core's start read committed,
+    // probed it, one window message; its nine messages are the control's
+    // text and caret, the caret's line read as NVDA's `_getLineOffsets`
+    // reads it. The run meets the root Core's start read committed,
     // compared by location, role and name as NVDA's `IAccessible._isEqual`
     // compares objects (`NVDAObjects/IAccessible/__init__.py` 906 to 959),
     // and reads each node's location, which a focus answer carries, as
@@ -4421,7 +4474,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "edit control focus with its caret",
         step.calls,
-        calls(0, 53, 6),
+        calls(0, 53, 9),
     );
     drop(core);
     app.quit();

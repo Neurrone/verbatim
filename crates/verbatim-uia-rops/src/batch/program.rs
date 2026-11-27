@@ -1084,8 +1084,6 @@ enum Regs {
         changes: (Reg<kind::Array>, Reg<kind::Array>),
         selected: Reg<kind::Bool>,
         selection_text: Reg<kind::Str>,
-        held: Reg<kind::Bool>,
-        previous_text: Reg<kind::Str>,
     },
     /// Its ending: done, or refused.
     Select(Reg<kind::Int>),
@@ -2378,16 +2376,6 @@ impl Emit<'_> {
             let read = b.text_range_get_text(selection, compared);
             b.set(selection_text, read);
         });
-        let previous_text = b.new_string("");
-        let previous_text = b.add_to_results(previous_text);
-        let held = b.not(old_collapsed);
-        let held = b.add_to_results(held);
-        b.if_(held, |b| {
-            let between = b.text_range_clone(old);
-            b.text_range_move_endpoint_by_range(between, c.end, old, old_end);
-            let read = b.text_range_get_text(between, compared);
-            b.set(previous_text, read);
-        });
         let selected = b.new_bool(false);
         b.set(selected, has_selection);
         let selected = b.add_to_results(selected);
@@ -2395,8 +2383,6 @@ impl Emit<'_> {
             changes,
             selected,
             selection_text,
-            held,
-            previous_text,
         }
     }
 }
@@ -2715,8 +2701,6 @@ impl<'a> State<'_, 'a> {
                     changes,
                     selected,
                     selection_text,
-                    held,
-                    previous_text,
                 },
                 _,
             ) => {
@@ -2728,10 +2712,6 @@ impl<'a> State<'_, 'a> {
                     selection_text: outcome
                         .get(*selected)?
                         .then(|| text(*selection_text))
-                        .transpose()?,
-                    previous_text: outcome
-                        .get(*held)?
-                        .then(|| text(*previous_text))
                         .transpose()?,
                 })
             }

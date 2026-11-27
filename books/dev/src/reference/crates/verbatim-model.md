@@ -303,7 +303,10 @@ tell, Core asks", which the protocol below carries.
   the committed focus's node to its outpost (`Followed`, with its
   `FollowGroup` and an extra object), or nothing. Each `Ask` carries its
   window's `WindowVerdict`, "probe first" when Core has none in force,
-  and each `Answer` the `Probe`s the request made. `Answer` carries one
+  and each `Answer` the `Probe`s the request made. A probe's answer
+  stands for `PROBE_LIFE_US` (half a second) from its start
+  (`probe_stands`), the one rule Core's backend cache and the
+  listener's probe record judge by. `Answer` carries one
   of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
   `Refusal`, not there, not responding, or the reader ended), a
   diagnostic detail, and when the reader's worker began and ended the

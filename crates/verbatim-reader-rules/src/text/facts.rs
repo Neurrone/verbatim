@@ -39,17 +39,13 @@ pub struct NodeAnchors<P> {
     pub held: BTreeMap<u64, LastRead<P>>,
 }
 
-/// The selection of a read: its ends, its text up to the source's cap for
-/// compared text when the source read it, and how the read reported it.
+/// The selection of a read: its ends, and how the read reported it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadSelection<P> {
     /// Where it starts.
     pub start: P,
     /// Where it ends.
     pub end: P,
-    /// Its text as it was read, up to the source's cap for compared text
-    /// (513 UTF-16 units through UIA); `None` when the source did not read it.
-    pub text: Option<Arc<[u16]>>,
     /// The selection as the read reported it.
     pub report: CaretSelection,
 }
@@ -80,7 +76,6 @@ impl<P> LastRead<P> {
             Some(selection) => Some(ReadSelection {
                 start: position(selection.start)?,
                 end: position(selection.end)?,
-                text: selection.text,
                 report: selection.report,
             }),
             None => None,
@@ -113,12 +108,10 @@ impl<P: Clone> LastRead<P> {
             Some(selection) => KeptSelection {
                 ends: (selection.start.clone(), selection.end.clone()),
                 collapsed: false,
-                text: selection.text.clone(),
             },
             None => KeptSelection {
                 ends: (self.caret.clone(), self.caret.clone()),
                 collapsed: true,
-                text: None,
             },
         }
     }
@@ -131,9 +124,6 @@ pub struct KeptSelection<P> {
     pub ends: (P, P),
     /// Nothing was selected.
     pub collapsed: bool,
-    /// Its text as it was read, up to the source's cap for compared text,
-    /// when something was selected and the source read it.
-    pub text: Option<Arc<[u16]>>,
 }
 
 impl<P> Default for NodeAnchors<P> {
@@ -153,7 +143,6 @@ impl<P> KeptSelection<P> {
         KeptSelection {
             ends: (end(&self.ends.0), end(&self.ends.1)),
             collapsed: self.collapsed,
-            text: self.text.clone(),
         }
     }
 }

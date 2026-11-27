@@ -1328,8 +1328,6 @@ pub struct FoundText {
 pub struct SelectionCompared {
     /// What became selected and unselected, and the whole new selection.
     pub difference: SelectionDifference,
-    /// Whether the text changed since the selection compared with.
-    pub text_changed: bool,
 }
 
 /// A [`Op::Select`]'s result.

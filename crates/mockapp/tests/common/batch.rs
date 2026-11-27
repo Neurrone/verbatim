@@ -773,7 +773,7 @@ pub fn describe(text: Option<&Text>, answer: &Answer) -> String {
                 format!("range {:?}", String::from_utf16_lossy(text))
             }
             Ran::Done(Found::CompareSelection(compared)) => format!(
-                "compared {:?} {:?} {:?}",
+                "compared {:?} {:?}",
                 compared
                     .changes
                     .iter()
@@ -783,10 +783,6 @@ pub fn describe(text: Option<&Text>, answer: &Answer) -> String {
                     .selection_text
                     .as_deref()
                     .map(String::from_utf16_lossy),
-                compared
-                    .previous_text
-                    .as_deref()
-                    .map(String::from_utf16_lossy)
             ),
             Ran::Done(Found::Select) => "selected".to_owned(),
             Ran::Done(Found::Locate(at)) => format!("located {at:?}"),

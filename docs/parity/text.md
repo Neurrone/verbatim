@@ -767,6 +767,24 @@ Forms text box (`target/e2e-evidence/m42-captures-2026-10-21/`): for
 line between the two breaks, with two
 (`2-review-bottom-two-final-line-breaks.txt`).
 
+### A standard edit control's line
+
+NVDA reads a line of a standard or rich edit control by its window
+messages (`EditTextInfo._getLineOffsets`, `NVDAObjects/window/edit.py`
+623 to 644): the line holding the offset, its start (`EM_LINEINDEX`),
+its length (`EM_LINELENGTH`), the end widened to one past the offset
+when it is not past it already, then walked on while it lies on the
+same line short of the text's length; invalid line info (start, end and
+line number at most 0, no lines, some text) is read from the whole
+text's line breaks (`findStartOfLine`, `findEndOfLine`). It never
+fails, so a text changing between the messages gives whatever line
+those answers make. Verbatim: **matched**, branch for branch
+(`verbatim-ia2`'s `EditText::line`, Dickson, 2026-11-28). The walk is
+asked at once as the next line's start, the end it reaches in one text.
+Offsets are unsigned, so a start the control does not name, which NVDA
+keeps as -1, fails the read, and an end before the start reads as an
+empty line, as NVDA's slice of the text reads nothing.
+
 ### Browse mode, quick nav, pass-through rules, virtual-buffer equivalent
 
 **not yet (M7)**; references

@@ -232,14 +232,14 @@ impl EditControl {
     ///
     /// # Errors
     ///
-    /// When the control does not answer or is gone.
+    /// When the control does not answer or is gone, or answers no line.
     pub fn line_from_offset(&self, offset: u32) -> EditResult<u32> {
         let line = if self.version >= 1 {
             self.send(EM_EXLINEFROMCHAR, 0, param(offset))?
         } else {
             self.send(EM_LINEFROMCHAR, offset as usize, 0)?
         };
-        Ok(u32::try_from(int_answer(line)).unwrap_or(0))
+        line_of(line, offset)
     }
 
     /// The offset where line `line` starts, `None` past the last line
@@ -492,6 +492,13 @@ pub(crate) fn text_offset(structure_bytes: usize) -> usize {
 )]
 fn int_answer(result: isize) -> i32 {
     result as i32
+}
+
+/// The line `EM_LINEFROMCHAR` or `EM_EXLINEFROMCHAR` answered `answer`
+/// holds `offset`: a negative answer names no line, and fails.
+fn line_of(answer: isize, offset: u32) -> EditResult<u32> {
+    u32::try_from(int_answer(answer))
+        .map_err(|_| EditError::Failed(format!("no line holds offset {offset}")))
 }
 
 /// An offset as a message parameter.
@@ -783,6 +790,17 @@ mod tests {
         assert_eq!(edit_api_version("RichEdit20"), Some(2));
         assert_eq!(edit_api_version("RICHEDIT50W"), Some(5));
         assert_eq!(edit_api_version("Button"), None);
+    }
+
+    /// A negative answer to the line-from-offset message names no line and
+    /// fails, rather than stand for the first line.
+    #[test]
+    fn a_line_from_an_offset_that_names_no_line_fails() {
+        assert_eq!(line_of(3, 20), Ok(3));
+        assert_eq!(
+            line_of(-1, 20),
+            Err(EditError::Failed("no line holds offset 20".to_owned()))
+        );
     }
 
     #[test]

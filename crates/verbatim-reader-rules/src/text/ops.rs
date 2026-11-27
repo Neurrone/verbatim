@@ -14,10 +14,7 @@ use std::cmp::Ordering;
 use verbatim_model::batch::{CaretAt, HeldSelection, SelectionCompared};
 use verbatim_model::{CaretSelection, Selection, TextAnchor, TextPosition};
 
-use super::{
-    CaretState, MAX_RANGE_UNITS, NodeText, TextResult, TextSource, change, change_of,
-    selection_changes,
-};
+use super::{CaretState, NodeText, TextResult, TextSource, change, selection_changes};
 
 /// The caret and the selection, each end held as an anchor, with whether
 /// the selection starts at the text's start, and the read held as the next
@@ -52,7 +49,7 @@ pub fn caret<S: TextSource>(
                 end: TextPosition::at(held.end),
             },
         };
-        (ends, report, None)
+        (ends, report)
     });
     let baseline = anchors.hold_caret(state.caret.clone(), kept, read_at_us);
     Ok(CaretAt {
@@ -66,8 +63,7 @@ pub fn caret<S: TextSource>(
 
 /// How the selection held under `after`, a `Caret`'s read, differs from the
 /// one held under `before`, a baseline or another `Caret`'s read: what
-/// became selected and unselected, the whole new selection, and whether
-/// the text between the old selection's ends changed since it was read.
+/// became selected and unselected, and the whole new selection.
 /// `Ok(Err(anchor))` names a held read no longer held.
 ///
 /// # Errors
@@ -101,18 +97,10 @@ pub fn compare_selection<S: TextSource>(
         None => None,
     }
     .filter(|selected| !selected.text.is_empty());
-    let text_changed = match (&kept.text, kept.collapsed) {
-        (Some(text), false) => {
-            let (now, _) = source.text(&kept.ends.0, &kept.ends.1, MAX_RANGE_UNITS)?;
-            change_of(false, &now).text != change_of(false, text).text
-        }
-        _ => false,
-    };
     Ok(Ok(SelectionCompared {
         difference: verbatim_model::SelectionDifference {
             changes,
             new_selection,
         },
-        text_changed,
     }))
 }

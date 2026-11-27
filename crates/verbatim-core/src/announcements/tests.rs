@@ -387,6 +387,45 @@ fn a_selection_of_the_committed_focus_is_its_state_change_with_no_request() {
     );
 }
 
+/// `tell` carrying a probe of window 5 begun at `began_us`, a provider
+/// answering it or not.
+fn probed(mut tell: Event, provider: bool, began_us: u64) -> Event {
+    let checked = tell.checked.as_mut().expect("a UI Automation tell's check");
+    checked.probe = Some(verbatim_model::request::Probe {
+        window: WindowHandle(5),
+        thread: 41,
+        provider,
+        began_us,
+    });
+    tell
+}
+
+/// A selection is judged native by Core's backend cache, the one judge
+/// of a window's verdict, not by the probe its tell carries: the check
+/// thread's probe at 3,500 found no provider, the tell that carried it was
+/// merged away, and a newer probe at 3,800, here a window opened's, found
+/// one. The selection carrying the older probe is spoken, as a progress
+/// bar in the window plays.
+#[test]
+fn a_selection_is_judged_by_the_newest_probe_not_the_one_it_carries() {
+    let mut state = committed();
+    let opened = uia(EventKind::UiaWindowOpened, 30, "AppPane", Payload::None);
+    assert_eq!(
+        feed_at(&mut state, 3_900, entry(probed(opened, true, 3_800))),
+        NOTHING
+    );
+    let mut states = StateSet::default();
+    states.insert(State::Selected);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            entry(probed(selected(1, states), false, 3_500))
+        ),
+        ["State(Selected)"]
+    );
+}
+
 /// A UI Automation focus on `[42, 3]`, "Paris", under `ancestors`, read by
 /// the listener and asked of the outpost: the request out is the
 /// completion, number 5.

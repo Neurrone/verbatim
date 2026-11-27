@@ -489,13 +489,7 @@ impl<P: Clone> NodeText<'_, P> {
     /// begun at `read_at_us`: the application's caret event for it then
     /// carries no change, and the next key compares with it. The line stays
     /// as it was read, since a move changes no text.
-    fn keep_made(
-        &mut self,
-        (start, end): (P, P),
-        selected: bool,
-        text: Option<Vec<u16>>,
-        read_at_us: u64,
-    ) {
+    fn keep_made(&mut self, (start, end): (P, P), selected: bool, read_at_us: u64) {
         let selection = selected.then(|| {
             let range = Selection {
                 start: self.position_of(start.clone()),
@@ -504,7 +498,6 @@ impl<P: Clone> NodeText<'_, P> {
             ReadSelection {
                 start: Slot::new(start.clone()),
                 end: Slot::new(end.clone()),
-                text: text.map(Arc::from),
                 report: CaretSelection { range },
             }
         });
@@ -868,14 +861,12 @@ type LineRead<P> = (Option<ReadUnit<P>>, Option<SelectionStart>);
 /// a position in the line's chunk when it lies on the line, so Core knows
 /// what comes before it (a Backspace over the selection says that); read
 /// by parts, it lies on the line where it is the caret. The report
-/// replaces the node's last read, with the selection's text when the read
-/// had it ([`CaretRead::selection_text`]).
+/// replaces the node's last read.
 fn report_for<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (state, read_at_us): (&CaretState<S::Pos>, u64),
     (line, selection_start): LineRead<S::Pos>,
-    selection_text: Option<Vec<u16>>,
 ) -> TextResult<CaretReport> {
     let (line, offset, formats) = if let Some(read) = line {
         read
@@ -927,7 +918,6 @@ fn report_for<S: TextSource>(
             |((start, end), report)| ReadSelection {
                 start: Slot::new(start.clone()),
                 end: Slot::new(end.clone()),
-                text: selection_text.map(Arc::from),
                 report: report.clone(),
             },
         ),

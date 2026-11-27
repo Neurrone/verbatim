@@ -297,7 +297,9 @@ it, so a reused handle is a new window. Its verdict is its class's when
 the class, normalized, is on NVDA's good or bad list or the Explorer
 shell rule names it, judged from each tell's classes and never kept;
 otherwise the newest probe of the window begun no more than half a second
-before the moment judged (`PROBE_LIFE_US`, NVDA's cache period), the
+before the moment judged (verbatim-model's `PROBE_LIFE_US` and
+`probe_stands`, NVDA's cache period, shared with the listener's probe
+record), the
 newest probe's start winning; otherwise none. A request that carried
 "probe first" and ended with no answer for its probe counts as a probe
 that timed out, begun when the request was sent, and a window's

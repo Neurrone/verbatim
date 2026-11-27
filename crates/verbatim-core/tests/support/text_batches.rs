@@ -269,7 +269,6 @@ pub fn selected(changes: Vec<SelectionChange>, baseline: u64) -> Reply {
                 changes,
                 new_selection: None,
             },
-            text_changed: false,
         })),
     ])
 }

@@ -840,8 +840,7 @@ anchors are:
   held, a unit to the provider's with the formatting its details name,
   and each result is made the
   model's, a `Caret`'s points held as anchors and its read held as the
-  next selection baseline (`NodeText::hold_caret`), with the selection's
-  text a `CompareSelection` of the run read, a `ReadText`'s chunks minted
+  next selection baseline (`NodeText::hold_caret`), a `ReadText`'s chunks minted
   with the formatting its details name, the control's support of each
   attribute learned as the caret read learns it. A node whose text cannot
   be opened answers each step of the run, under its condition, as the

@@ -269,12 +269,85 @@ pub struct EditText {
     length: Option<u32>,
 }
 
-/// A line: its number, start, and end (the next line's start).
-#[derive(Clone, Copy)]
+/// A line: its number, start, and end, as NVDA's `_getLineOffsets` finds
+/// them ([`EditText::line`]), its end never before its start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Line {
     number: u32,
     start: u32,
     end: u32,
+}
+
+impl Line {
+    /// How far `offset` lies into the line; an offset before its start
+    /// means the text changed since the line was read, and fails the read.
+    fn offset_of(&self, offset: u32) -> TextResult<usize> {
+        offset
+            .checked_sub(self.start)
+            .map(|at| at as usize)
+            .ok_or_else(|| {
+                TextError::Failed(format!("line {} changed during the read", self.number))
+            })
+    }
+}
+
+/// A line's end as NVDA's `_getLineOffsets` first takes it, the start and
+/// `EM_LINELENGTH`'s length added, widened to one past `offset` when it is
+/// not past it already, for controls that give a length without the line
+/// feed (`nvda/source/NVDAObjects/window/edit.py` 627 and 637 to 639).
+fn widened_end(start: i64, length: u32, offset: u32) -> i64 {
+    let end = start + i64::from(length);
+    if end <= i64::from(offset) {
+        i64::from(offset) + 1
+    } else {
+        end
+    }
+}
+
+/// The start of the line holding UTF-16 offset `offset` of `text`, as
+/// NVDA's `findStartOfLine` finds it (`nvda/source/textInfos/offsets.py`
+/// 89 to 113).
+fn find_start_of_line(text: &[u16], offset: usize) -> usize {
+    const CR: u16 = 0x0D;
+    const LF: u16 = 0x0A;
+    if text.is_empty() {
+        return 0;
+    }
+    let mut offset = offset.min(text.len() - 1);
+    if text[offset] == LF && offset > 0 && text[offset - 1] == CR {
+        offset -= 1;
+    }
+    let before = &text[..offset];
+    before
+        .iter()
+        .rposition(|&unit| unit == LF)
+        .or_else(|| before.iter().rposition(|&unit| unit == CR))
+        .map_or(0, |at| at + 1)
+}
+
+/// The start of the line after the one holding UTF-16 offset `offset` of
+/// `text`, as NVDA's `findEndOfLine` finds it
+/// (`nvda/source/textInfos/offsets.py` 116 to 140).
+fn find_end_of_line(text: &[u16], offset: usize) -> usize {
+    const CR: u16 = 0x0D;
+    const LF: u16 = 0x0A;
+    if text.is_empty() {
+        return 0;
+    }
+    let offset = offset.min(text.len() - 1);
+    let find = |unit: u16| {
+        text[offset..]
+            .iter()
+            .position(|&at| at == unit)
+            .map(|at| offset + at)
+    };
+    let end = if text[offset] == LF {
+        Some(offset)
+    } else {
+        find(LF)
+    };
+    let end = end.or_else(|| if text[offset] == CR { None } else { find(CR) });
+    end.unwrap_or(text.len() - 1) + 1
 }
 
 impl EditText {
@@ -298,33 +371,85 @@ impl EditText {
         Ok(length)
     }
 
-    /// The line containing `offset`.
+    /// The line containing `offset`, read as NVDA's
+    /// `EditTextInfo._getLineOffsets` reads it, branch for branch
+    /// (`nvda/source/NVDAObjects/window/edit.py` 623 to 644), so that a
+    /// text changing between the messages gives the line NVDA would read.
     fn line(&mut self, offset: u32) -> TextResult<Line> {
+        // 624 to 627: the line's number, `EM_LINEINDEX`'s raw answer for
+        // it (-1 for a line the control does not name), and
+        // `EM_LINELENGTH`'s for the offset.
         let number = self.control.line_from_offset(offset)?;
-        self.line_number(number)
+        let start = self.control.line_start(number)?.map_or(-1, i64::from);
+        let length = self.control.line_length(offset)?;
+        let first_end = start + i64::from(length);
+        // 628 to 636: invalid line info is read from the whole text.
+        if start <= 0
+            && first_end <= 0
+            && number == 0
+            && self.control.line_count()? == 0
+            && self.length()? > 0
+        {
+            let whole = self.length()?;
+            let text = self.control.text_range(0, whole)?;
+            let at = offset as usize;
+            return Ok(Line {
+                number,
+                start: to_u32(find_start_of_line(&text, at)),
+                end: to_u32(find_end_of_line(&text, at)),
+            });
+        }
+        // 637 to 639.
+        let mut end = widened_end(start, length, offset);
+        // 640 to 643: NVDA walks the end on one offset at a time while it
+        // lies on the line and short of the text's length. In one text
+        // that walk stops at the next line's start or the length, which
+        // is asked at once instead.
+        let limit = i64::from(self.length()?);
+        if end < limit && self.control.line_from_offset(to_u32_offset(end))? == number {
+            end = self
+                .control
+                .line_start(number + 1)?
+                .map_or(limit, i64::from)
+                .min(limit);
+        }
+        // NVDA keeps a start of -1 as an offset; offsets here are
+        // unsigned, so that read fails. An end before the start, whose
+        // text NVDA reads as empty, is an empty line at the start.
+        let start = u32::try_from(start).map_err(|_| {
+            TextError::Failed(format!("line {number} has no start the control names"))
+        })?;
+        Ok(Line {
+            number,
+            start,
+            end: to_u32_offset(end).max(start),
+        })
     }
 
-    /// Line `number`.
-    fn line_number(&mut self, number: u32) -> TextResult<Line> {
-        let start = self.control.line_start(number)?.unwrap_or(0);
-        let end = match self.control.line_start(number + 1)? {
-            Some(next) if next > start => next,
-            _ => self.length()?,
-        };
-        Ok(Line { number, start, end })
+    /// The start of line `number`, which a move by lines lands on; a line
+    /// the control no longer names fails the move, the text having changed
+    /// since the line count was read.
+    fn line_start_of(&mut self, number: u32) -> TextResult<u32> {
+        self.control
+            .line_start(number)?
+            .ok_or_else(|| TextError::Failed(format!("line {number} changed during the read")))
     }
 
     /// A line's text, its line break included, at most `max` code units.
+    /// NVDA's line can end past the text, one past an offset at its end
+    /// (`widened_end`); its text is what the text holds, as NVDA's slice of
+    /// the text reads it.
     fn line_text(&mut self, line: Line, max: usize) -> TextResult<Vec<u16>> {
+        let line_end = line.end.min(self.length()?.max(line.start));
         if self.control.version() >= 2 {
-            let end = line.end.min(line.start.saturating_add(to_u32(max)));
+            let end = line_end.min(line.start.saturating_add(to_u32(max)));
             return Ok(self.control.text_range(line.start, end)?);
         }
         // `EM_GETLINE` leaves out the line break; a plain edit control's
         // break is a carriage return and line feed, or with soft breaks
         // shown, two carriage returns and a line feed.
         let mut text = self.control.line_text(line.number, max)?;
-        let gap = (line.end - line.start) as usize;
+        let gap = (line_end - line.start) as usize;
         let gap = gap.saturating_sub(text.len()).min(3);
         let breaks: Vec<u16> = "\r\r\n".encode_utf16().collect();
         text.extend_from_slice(&breaks[3 - gap..]);
@@ -353,7 +478,7 @@ impl EditText {
         }
         let line = self.line(offset)?;
         let text = self.line_text(line, usize::MAX)?;
-        let at = (offset - line.start) as usize;
+        let at = line.offset_of(offset)?;
         let (start, end) = plain_word(&text, at).map_err(|error| uniscribe_failed(&error))?;
         Ok((line.start + to_u32(start), line.start + to_u32(end)))
     }
@@ -366,7 +491,7 @@ impl EditText {
     fn character(&mut self, offset: u32) -> TextResult<(u32, u32)> {
         let line = self.line(offset)?;
         let text = self.line_text(line, usize::MAX)?;
-        let at = (offset - line.start) as usize;
+        let at = line.offset_of(offset)?;
         let (start, end) = if at >= text.len() {
             (text.len(), text.len())
         } else {
@@ -389,6 +514,12 @@ impl EditText {
             _ => return Ok(None),
         }))
     }
+}
+
+/// A non-negative offset NVDA's arithmetic gave, as an offset; one past
+/// any offset a control holds stays the largest.
+fn to_u32_offset(offset: i64) -> u32 {
+    u32::try_from(offset.max(0)).unwrap_or(u32::MAX)
 }
 
 /// A count of code units as an offset.
@@ -510,7 +641,7 @@ impl TextSource for EditText {
                 let last = self.control.line_count()?.saturating_sub(1);
                 let target = (i64::from(line.number) + i64::from(count)).clamp(0, i64::from(last));
                 let target = u32::try_from(target).unwrap_or(0);
-                let landed = self.line_number(target)?.start;
+                let landed = self.line_start_of(target)?;
                 let moved = i32::try_from(i64::from(target) - i64::from(line.number)).unwrap_or(0);
                 Ok(Some((landed, moved)))
             }
@@ -600,6 +731,81 @@ mod tests {
 
     fn units(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
+    }
+
+    /// NVDA's end for a line: the start and the length, widened to one
+    /// past the offset when a control's length leaves out the line feed or
+    /// the text changed between the messages (`edit.py` 637 to 639).
+    #[test]
+    fn a_lines_end_is_widened_past_the_offset_as_nvda_widens_it() {
+        assert_eq!(widened_end(5, 3, 6), 8);
+        assert_eq!(widened_end(5, 0, 6), 7, "a length short of the offset");
+        assert_eq!(widened_end(10, 0, 3), 10, "an end past the offset stays");
+        assert_eq!(widened_end(5, 1, 6), 7, "an end at the offset");
+    }
+
+    /// NVDA's invalid line info is read from the whole text: the start
+    /// after the last break before the offset, and the end after the next
+    /// break, a carriage return and line feed one break.
+    #[test]
+    fn invalid_line_info_reads_the_line_from_the_text_as_nvda_does() {
+        let text = units("one\r\ntwo\rthree");
+        assert_eq!(
+            (find_start_of_line(&text, 1), find_end_of_line(&text, 1)),
+            (0, 5)
+        );
+        assert_eq!(
+            (find_start_of_line(&text, 4), find_end_of_line(&text, 4)),
+            (0, 5)
+        );
+        assert_eq!(
+            (find_start_of_line(&text, 6), find_end_of_line(&text, 6)),
+            (5, 9)
+        );
+        assert_eq!(
+            (find_start_of_line(&text, 11), find_end_of_line(&text, 11)),
+            (5, 14),
+            "after the bare carriage return, past the last line feed"
+        );
+        assert_eq!(
+            (find_start_of_line(&[], 0), find_end_of_line(&[], 0)),
+            (0, 0)
+        );
+    }
+
+    /// A line of a multi-line Edit of this thread's holding "one" and
+    /// "two", read as NVDA reads it: the first line takes its break, and a
+    /// line offset an offset before its start fails.
+    #[test]
+    fn an_edit_controls_line_is_read_as_nvda_reads_it() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, ES_MULTILINE, WINDOW_EX_STYLE, WINDOW_STYLE, WS_POPUP,
+        };
+        // SAFETY: a window with no parent, made and destroyed on this
+        // thread.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("Edit"),
+                windows::core::w!("one\r\ntwo"),
+                WS_POPUP | WINDOW_STYLE(ES_MULTILINE as u32),
+                0,
+                0,
+                100,
+                100,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("an edit control");
+        let mut text = EditText::new(hwnd.0 as isize, 0);
+        let lines = (text.line(1), text.line(6), text.line(8));
+        // SAFETY: the window this thread made, destroyed once.
+        unsafe { DestroyWindow(hwnd) }.expect("the window destroyed");
+        let line = |number, start, end| Ok(Line { number, start, end });
+        assert_eq!(lines, (line(0, 0, 5), line(1, 5, 8), line(1, 5, 9)));
     }
 
     /// The plain edit word at `at` of `line`.

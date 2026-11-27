@@ -215,6 +215,6 @@ fn place<S: TextSource>(
             "the caret could not be moved".to_owned(),
         ));
     }
-    anchors.keep_made((target.clone(), target.clone()), false, None, read_at_us);
+    anchors.keep_made((target.clone(), target.clone()), false, read_at_us);
     held_after_move(source, anchors, kept_before, read_at_us)
 }
