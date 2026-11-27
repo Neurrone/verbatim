@@ -93,10 +93,12 @@ use serde::{Deserialize, Serialize};
 /// to answer UI Automation before it is brought forward; version 36 added
 /// [`Request::RunnerLoad`], so a failure records the machine's load, and
 /// a time limit to [`Request::ProcessDiagnostics`], with how long its
-/// reading took in [`ProcessDiagnostics::elapsed_ms`]. A test run
+/// reading took in [`ProcessDiagnostics::elapsed_ms`]; version 37 added
+/// [`RunnerLoad::services`], so a busy `svchost.exe` is named by the
+/// services it runs. A test run
 /// against an older agent is refused at `Hello` instead of losing its
 /// connection mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 36;
+pub const AGENT_PROTOCOL_VERSION: u32 = 37;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -1401,8 +1403,21 @@ pub struct RunnerLoad {
     pub processor: Result<ProcessorLoad, String>,
     /// The disks' queue.
     pub disk: Result<DiskQueue, String>,
+    /// Every running Windows service and the process it runs in, so a
+    /// busy `svchost.exe` among [`ProcessorLoad::top`] is named by its
+    /// services.
+    pub services: Result<Vec<RunningService>, String>,
     /// How long the reading took, in milliseconds.
     pub elapsed_ms: u64,
+}
+
+/// A running Windows service, for [`RunnerLoad::services`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunningService {
+    /// Its service name, such as `wuauserv`.
+    pub name: String,
+    /// The id of the process it runs in.
+    pub pid: u32,
 }
 
 /// The machine's memory use, for [`RunnerLoad`].
@@ -2043,6 +2058,10 @@ mod tests {
                     dwm: vec![dwm],
                 }),
                 disk: Err("PdhAddEnglishCounterW failed: 0xC0000BB8".to_owned()),
+                services: Ok(vec![RunningService {
+                    name: "wuauserv".to_owned(),
+                    pid: 4496,
+                }]),
                 elapsed_ms: 5_002,
             }),
         };

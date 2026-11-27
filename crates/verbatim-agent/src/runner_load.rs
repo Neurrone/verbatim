@@ -2,14 +2,16 @@
 //! machine's load when a scenario fails, so a window that stopped
 //! answering on a stalled runner is reported with what else the machine
 //! was doing: processor and memory use, the disks' queue, the processes
-//! that spent the most processor time over a short interval, and the
-//! Desktop Window Manager, which draws every window.
+//! that spent the most processor time over a short interval, the
+//! Desktop Window Manager, which draws every window, and the running
+//! services with the process each runs in, which name a busy `svchost.exe`.
 //!
 //! Every part is read without a window or UI call, and without opening any
 //! process: the processes' times, working sets and thread counts come from
 //! one system-wide query (`NtQuerySystemInformation`), the system's from
-//! `GetSystemTimes` and `GlobalMemoryStatusEx`, and the disks' queue from
-//! the performance data helper. So a frozen desktop, or a process that
+//! `GetSystemTimes` and `GlobalMemoryStatusEx`, the disks' queue from
+//! the performance data helper, and the services from the service control
+//! manager's list. So a frozen desktop, or a process that
 //! cannot be read, holds none of it up. The parts are read on threads of
 //! their own and the answer is given at its time limit with what has been
 //! read, each part not read saying so.
@@ -22,10 +24,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
+use windows::Win32::Foundation::ERROR_MORE_DATA;
 use windows::Win32::Foundation::{FILETIME, STATUS_INFO_LENGTH_MISMATCH};
 use windows::Win32::System::Performance::{
     PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PdhAddEnglishCounterW,
     PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue, PdhOpenQueryW,
+};
+use windows::Win32::System::Services::{
+    CloseServiceHandle, ENUM_SERVICE_STATUS_PROCESSW, EnumServicesStatusExW, OpenSCManagerW,
+    SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_ENUMERATE_SERVICE, SERVICE_ACTIVE, SERVICE_WIN32,
 };
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::System::Threading::GetSystemTimes;
@@ -33,7 +40,9 @@ use windows::Win32::System::WindowsProgramming::SYSTEM_PROCESS_INFORMATION;
 use windows::core::{PCWSTR, w};
 
 use crate::pace::Pacer;
-use crate::protocol::{DiskQueue, MemoryLoad, ProcessLoad, ProcessorLoad, RunnerLoad};
+use crate::protocol::{
+    DiskQueue, MemoryLoad, ProcessLoad, ProcessorLoad, RunnerLoad, RunningService,
+};
 
 /// How many of the processes that spent the most processor time are
 /// listed.
@@ -48,10 +57,12 @@ enum Part {
     Memory(Result<MemoryLoad, String>),
     Processor(Result<ProcessorLoad, String>),
     Disk(Result<DiskQueue, String>),
+    Services(Result<Vec<RunningService>, String>),
 }
 
-/// The machine's load: memory at once, and the processor and disk
-/// figures over `interval`, each part read on a thread of its own. Answers
+/// The machine's load: memory and the running services at once, and the
+/// processor and disk figures over `interval`, the services and the disk
+/// each read on a thread of their own. Answers
 /// within `timeout` with what has been read; a part not read by then says
 /// so, and its thread is left to finish alone, its answer dropped.
 #[must_use]
@@ -63,10 +74,24 @@ pub fn runner_load(interval: Duration, timeout: Duration) -> RunnerLoad {
         memory: Err(not_read("the memory")),
         processor: Err(not_read("the processor use")),
         disk: Err(not_read("the disks' queue")),
+        services: Err(not_read("the services' list")),
         elapsed_ms: 0,
     };
     let (sender, receiver) = mpsc::channel();
     let processor_sender = sender.clone();
+    let services_sender = sender.clone();
+    // On a thread of its own, since the service control manager answers
+    // through its own process, which a stalled machine can hold up.
+    if let Err(error) = thread::Builder::new()
+        .name("runner-services".to_owned())
+        .spawn(move || {
+            let _ = services_sender.send(Part::Services(services()));
+        })
+    {
+        load.services = Err(format!(
+            "the thread reading it could not be started: {error}"
+        ));
+    }
     if let Err(error) = thread::Builder::new()
         .name("runner-load".to_owned())
         .spawn(move || {
@@ -89,13 +114,14 @@ pub fn runner_load(interval: Duration, timeout: Duration) -> RunnerLoad {
             "the thread reading it could not be started: {error}"
         ));
     }
-    // Ends when both threads have sent all they read and gone, or at the
+    // Ends when every thread has sent all it read and gone, or at the
     // deadline.
     while let Ok(part) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         match part {
             Part::Memory(memory) => load.memory = memory,
             Part::Processor(processor) => load.processor = processor,
             Part::Disk(disk) => load.disk = disk,
+            Part::Services(services) => load.services = services,
         }
     }
     load.elapsed_ms = milliseconds(started.elapsed());
@@ -324,6 +350,95 @@ fn parse_processes(buffer: &[u64]) -> Vec<ProcessTimes> {
     }
 }
 
+/// The largest buffer the services' list is read into, in bytes: far
+/// above any machine's list, so a size that keeps growing ends as an error.
+const MAX_SERVICE_LIST_BYTES: usize = 16 << 20;
+
+/// Every running Win32 service and the process it runs in, from the
+/// service control manager's list, which opens no process.
+fn services() -> Result<Vec<RunningService>, String> {
+    // SAFETY: the local machine's active database; the handle is closed
+    // below, once.
+    let manager =
+        unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_ENUMERATE_SERVICE) }
+            .map_err(|error| format!("OpenSCManagerW failed: {error}"))?;
+    let read = list_services(manager);
+    // SAFETY: the handle opened above.
+    // A failed close leaves only a handle until the agent ends, and the
+    // list is read already, so its error is not reported.
+    let _ = unsafe { CloseServiceHandle(manager) };
+    read
+}
+
+/// [`services`]' list, from the open `manager`.
+fn list_services(manager: SC_HANDLE) -> Result<Vec<RunningService>, String> {
+    // `u64`s, so the entries the call writes are aligned.
+    let mut buffer: Vec<u64> = vec![0; (64 << 10) / 8];
+    let mut services = Vec::new();
+    let mut resume = 0u32;
+    loop {
+        let mut needed = 0u32;
+        let mut returned = 0u32;
+        // One pointer for the call's writes and the reads after it.
+        let start = buffer.as_mut_ptr().cast::<u8>();
+        // SAFETY: a byte view of all of `buffer`, used only by the call
+        // below.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(start, buffer.len() * 8) };
+        // SAFETY: `manager` is open, `bytes` is writable, and the counts and
+        // the resume handle are locals.
+        let listed = unsafe {
+            EnumServicesStatusExW(
+                manager,
+                SC_ENUM_PROCESS_INFO,
+                SERVICE_WIN32,
+                SERVICE_ACTIVE,
+                Some(bytes),
+                &raw mut needed,
+                &raw mut returned,
+                Some(&raw mut resume),
+                PCWSTR::null(),
+            )
+        };
+        let more = match listed {
+            Ok(()) => false,
+            Err(error) if error.code() == ERROR_MORE_DATA.to_hresult() => true,
+            Err(error) => return Err(format!("EnumServicesStatusExW failed: {error}")),
+        };
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "a `u64` buffer is aligned for the entries' pointers"
+        )]
+        let entries = start.cast::<ENUM_SERVICE_STATUS_PROCESSW>();
+        for index in 0..returned as usize {
+            // SAFETY: the call wrote `returned` entries at the buffer's
+            // start, each name pointing into the buffer, which is not
+            // written again until they are read.
+            let entry = unsafe { &*entries.wrapping_add(index) };
+            // SAFETY: a terminated string in `buffer`, as above.
+            let name = unsafe { entry.lpServiceName.to_string() }
+                .map_err(|error| format!("a service's name is not UTF-16: {error}"))?;
+            services.push(RunningService {
+                name,
+                pid: entry.ServiceStatusProcess.dwProcessId,
+            });
+        }
+        if !more {
+            return Ok(services);
+        }
+        // With nothing returned the buffer is too small for the next
+        // entry: grow it to the size the call asked for.
+        if returned == 0 {
+            let grown = (needed as usize).max(buffer.len() * 8) + (16 << 10);
+            if grown > MAX_SERVICE_LIST_BYTES {
+                return Err(format!(
+                    "the services' list asked for {needed} bytes, more than the {MAX_SERVICE_LIST_BYTES} allowed"
+                ));
+            }
+            buffer = vec![0; grown.div_ceil(8)];
+        }
+    }
+}
+
 /// The disks' queue, all physical disks together, over `interval`, from
 /// the performance data helper's counters, named in English so a
 /// machine's language does not change them.
@@ -482,12 +597,21 @@ mod tests {
             processor.dwm
         );
         load.disk.expect("the disks' queue is read");
+        let services = load.services.expect("the services are read");
+        // The event log service runs on every Windows, in a process of its
+        // own kind, `svchost.exe`, which is among the processes listed.
+        let event_log = services
+            .iter()
+            .find(|service| service.name.eq_ignore_ascii_case("EventLog"))
+            .unwrap_or_else(|| panic!("the event log service runs: {services:?}"));
+        assert_ne!(event_log.pid, 0, "{event_log:?}");
     }
 
     /// A sample whose parts cannot be read within its time limit, since
     /// its interval is longer, answers at the limit with the memory, read
     /// at once, and says the processor use and the disks' queue were not
-    /// read.
+    /// read. The services, read at once too, are not asserted: how fast
+    /// the service control manager answers is not this test's to fix.
     #[test]
     fn a_sample_answers_at_its_time_limit_with_what_it_has() {
         let load = runner_load(Duration::from_secs(10), Duration::from_millis(500));

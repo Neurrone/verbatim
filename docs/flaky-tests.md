@@ -64,7 +64,12 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the same runner stall. The compiled WPF host took about 33 s to show its window; Verbatim's first focus read probed its window, timed out after 3 s, fell back to MSAA and read a bare window. The next read found the host answering, but the scenario had ended. This is the mechanism of the entry 39091874 removed when the hosts were compiled, so compiling them was not enough on a stalled runner.
   - Fix: as for the entries above.
 
-- `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci-arm64` (same run)
+- `second_application_and_verbatim_menu` on GitHub's runner (run 45922422116, 2026-11-27, at fa61bdaa)
+  - How: setup failed before any speech: the stand-in's window (`text_box_form.exe`) did not handle its restore within 5 s and was listed as not responding.
+  - Cause: the same runner stall, the first with the machine's load recorded: the disks' queue averaged 2.89 and stood at 3.00, while one `svchost.exe` (pid 4496) spent 22.2% of the processors and the processor was 33.5% busy; the stand-in had spent 140 ms of processor time. So the runner's disk was busy, most likely for that service host; which services it runs was not recorded.
+  - Fix: none in Verbatim. `runner-load.txt` now names the services each listed `svchost.exe` runs (agent protocol 37), so the next stall names the Windows service behind the disk load.
+
+- `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci-arm64` (run 45884584255, the `wpf_password` run's)
   - How: UIA_E_TIMEOUT from `window_live` on the compiled Forms program it had just started, after 14.7 s; it took 2.7 to 7.8 s in the 11 runs before.
   - Cause: the Forms program not answering UI Automation's first connection, the same family on the ARM64 runner; the log carries only the panic.
   - Fix: as for the entries above.

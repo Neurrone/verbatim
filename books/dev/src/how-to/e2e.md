@@ -705,11 +705,15 @@ saying so. One fact a line:
   its share of the processors over the interval, the processor time it
   has spent since it started, its threads and its working set;
 - the 12 processes that spent the most processor time over the interval,
-  the most first, in the same form.
+  the most first, in the same form, each `svchost.exe` and any other
+  service host ending with the Windows services it runs, from the service
+  control manager's list (`services wuauserv, BITS`), which the summary
+  line gives too; when the list was not read, a `services:` line says why.
 
 Read it beside the wait chains. A runner whose processor is near 100%
 busy names its cause in the top processes: Defender (`MsMpEng.exe`),
-Windows Update (`TiWorker.exe`, `TrustedInstaller.exe`), search indexing
+Windows Update (`TiWorker.exe`, `TrustedInstaller.exe`, or a
+`svchost.exe` running `wuauserv` or `UsoSvc`), search indexing
 (`SearchIndexer.exe`), or the recorder's `ffmpeg.exe`. A disks' queue
 well above 1 with an idle processor points at the disk; little memory
 available, at paging. A runner idle on every count while a window does

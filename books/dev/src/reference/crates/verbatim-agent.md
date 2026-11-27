@@ -131,8 +131,10 @@ Public API:
     `NtQuerySystemInformation`'s process list, the interval apart, giving
     the 12 processes that spent the most and every `dwm.exe`; and the
     physical disks' current and average queue from the performance data
-    helper's English counter names. The interval is timed by the pacing
-    module's waitable timer. The parts are read on two threads of their
+    helper's English counter names; and every running Win32 service with
+    the process it runs in, from `EnumServicesStatusExW`, since version
+    37, so a busy `svchost.exe` is named. The interval is timed by the pacing
+    module's waitable timer. The parts are read on three threads of their
     own and the answer is given at the request's time limit with each part
     not read by then saying so, its thread left to finish alone), and
     `TakeForeignTerminalWindows` (every Windows

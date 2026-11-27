@@ -4549,10 +4549,46 @@ fn hundredths(hundredths: u32) -> String {
     format!("{}.{:02}", hundredths / 100, hundredths % 100)
 }
 
-/// One process's use, on one line.
-fn describe_process_load(process: &ProcessLoad) -> String {
+/// The names of the running services in process `pid`, none when the
+/// services' list was not read.
+fn services_in(load: &RunnerLoad, pid: u32) -> Vec<&str> {
+    load.services.as_ref().map_or_else(
+        |_| Vec::new(),
+        |services| {
+            services
+                .iter()
+                .filter(|service| service.pid == pid)
+                .map(|service| service.name.as_str())
+                .collect()
+        },
+    )
+}
+
+/// A process's name, with its services (`services`) if any, and its share
+/// of the processors, for the summary line.
+fn named_load(process: &ProcessLoad, services: &[&str]) -> String {
+    let runs = if services.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", services.join(", "))
+    };
     format!(
-        "{} pid {}: {} of the processors, {} ms in all, {} threads, working set {} KB",
+        "{}{runs} {}",
+        process.name,
+        percent(process.processor_tenths)
+    )
+}
+
+/// One process's use, on one line, ending with the services it runs, if
+/// any (`services`).
+fn describe_process_load(process: &ProcessLoad, services: &[&str]) -> String {
+    let runs = if services.is_empty() {
+        String::new()
+    } else {
+        format!(", services {}", services.join(", "))
+    };
+    format!(
+        "{} pid {}: {} of the processors, {} ms in all, {} threads, working set {} KB{runs}",
         process.name,
         process.pid,
         percent(process.processor_tenths),
@@ -4564,9 +4600,10 @@ fn describe_process_load(process: &ProcessLoad) -> String {
 
 /// The machine's load (`load`), one fact a line: how long it took, the
 /// processor use, memory, the disks' queue, each `dwm.exe`, then the
-/// processes that spent the most processor time; each part not read says
-/// why. And one line summing up the processor, memory and disk figures,
-/// the three busiest processes and the Desktop Window Manager.
+/// processes that spent the most processor time, each with the services it
+/// runs; each part not read says why. And one line summing up the
+/// processor, memory and disk figures, the three busiest processes with
+/// their services, and the Desktop Window Manager.
 fn describe_runner_load(load: &RunnerLoad) -> (Vec<String>, String) {
     let mut lines = vec![format!(
         "the machine's load, read in {} ms",
@@ -4622,20 +4659,24 @@ fn describe_runner_load(load: &RunnerLoad) -> (Vec<String>, String) {
             summary.push("disks' queue not read".to_owned());
         }
     }
+    if let Err(error) = &load.services {
+        lines.push(format!("services: {error}"));
+    }
+    let services_of = |pid: u32| services_in(load, pid);
     let mut busiest = String::new();
     if let Ok(processor) = &load.processor {
         if processor.dwm.is_empty() {
             lines.push("dwm.exe: none running".to_owned());
         }
-        lines.extend(processor.dwm.iter().map(describe_process_load));
+        let describe =
+            |process: &ProcessLoad| describe_process_load(process, &services_of(process.pid));
+        lines.extend(processor.dwm.iter().map(describe));
         lines.push(format!(
             "the {} processes that spent the most processor time over the interval:",
             processor.top.len()
         ));
-        lines.extend(processor.top.iter().map(describe_process_load));
-        let named = |process: &ProcessLoad| {
-            format!("{} {}", process.name, percent(process.processor_tenths))
-        };
+        lines.extend(processor.top.iter().map(describe));
+        let named = |process: &ProcessLoad| named_load(process, &services_of(process.pid));
         let dwm = if processor.dwm.is_empty() {
             "no dwm.exe".to_owned()
         } else {
@@ -5291,7 +5332,7 @@ mod minimize_tests {
     }
 
     /// The machine's load is written with each part read, each
-    /// `dwm.exe` and the top processes, one a line, and summed up by the
+    /// `dwm.exe` and the top processes with their services, one a line, and summed up by the
     /// system's figures, the three busiest processes and the Desktop Window
     /// Manager; a part not read says why, in both.
     #[test]
@@ -5320,12 +5361,20 @@ mod minimize_tests {
                 top: vec![
                     process("MsMpEng.exe", 3804, 612),
                     process("TiWorker.exe", 7716, 250),
-                    process("ffmpeg.exe", 9012, 80),
+                    process("svchost.exe", 9012, 80),
                     dwm.clone(),
                 ],
                 dwm: vec![dwm],
             }),
             disk: Err("the disks' queue was not read within 5s".to_owned()),
+            services: Ok(["wuauserv", "BITS", "EventLog"]
+                .into_iter()
+                .zip([9012, 9012, 1064])
+                .map(|(name, pid)| verbatim_agent::protocol::RunningService {
+                    name: name.to_owned(),
+                    pid,
+                })
+                .collect()),
             elapsed_ms: 5_001,
         };
         let (lines, summary) = describe_runner_load(&load);
@@ -5346,13 +5395,42 @@ mod minimize_tests {
                 "the 4 processes that spent the most processor time over the interval:".to_owned(),
                 line("MsMpEng.exe", 3804, "61.2%"),
                 line("TiWorker.exe", 7716, "25.0%"),
-                line("ffmpeg.exe", 9012, "8.0%"),
+                format!(
+                    "{}, services wuauserv, BITS",
+                    line("svchost.exe", 9012, "8.0%")
+                ),
                 line("dwm.exe", 1180, "0.5%"),
             ]
         );
         assert_eq!(
             summary,
-            "the machine's load: processor 97.4% busy, memory 61% in use, disks' queue not read; busiest MsMpEng.exe 61.2%, TiWorker.exe 25.0%, ffmpeg.exe 8.0%; dwm.exe 0.5%"
+            "the machine's load: processor 97.4% busy, memory 61% in use, disks' queue not read; busiest MsMpEng.exe 61.2%, TiWorker.exe 25.0%, svchost.exe (wuauserv, BITS) 8.0%; dwm.exe 0.5%"
+        );
+        let unread = RunnerLoad {
+            services: Err("the services' list was not read within 5s".to_owned()),
+            ..load
+        };
+        let (lines, summary) = describe_runner_load(&unread);
+        assert_eq!(
+            lines,
+            vec![
+                "the machine's load, read in 5001 ms".to_owned(),
+                "processor: 97.4% busy over 1003 ms, 141 processes".to_owned(),
+                "memory: 61% in use, 6390 of 16383 MB available, commit 9002 of 20479 MB available"
+                    .to_owned(),
+                "disks' queue: the disks' queue was not read within 5s".to_owned(),
+                "services: the services' list was not read within 5s".to_owned(),
+                line("dwm.exe", 1180, "0.5%"),
+                "the 4 processes that spent the most processor time over the interval:".to_owned(),
+                line("MsMpEng.exe", 3804, "61.2%"),
+                line("TiWorker.exe", 7716, "25.0%"),
+                line("svchost.exe", 9012, "8.0%"),
+                line("dwm.exe", 1180, "0.5%"),
+            ]
+        );
+        assert_eq!(
+            summary,
+            "the machine's load: processor 97.4% busy, memory 61% in use, disks' queue not read; busiest MsMpEng.exe 61.2%, TiWorker.exe 25.0%, svchost.exe 8.0%; dwm.exe 0.5%"
         );
     }
 
