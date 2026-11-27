@@ -217,8 +217,13 @@ terminal model").
   another line written there (Windows Terminal's `cls`). Rows above where
   the last read's first row went are `Shown`.
 - Lingering. A gone row lingers for 2 seconds when a program had rewritten
-  it or it was at or below the caret; a new row with its text is that row
-  back (`Returned`).
+  it or it was at or below the caret; a new row with its text, the nearest
+  first, is that row back (`Returned`). The memory alone keeps the
+  lingering rows, each numbered as it starts to linger (`LingerId`, from a
+  counter on `TerminalMemory`), tests their age in one place, and chooses
+  the row taken back once; the outcome names, by number, the rows that
+  started to linger (`Outcome::lingered`) and the one each returned row is
+  (`Outcome::returned`).
 - Lost reads. A read is lost when it keeps and pairs nothing and is no new
   screen, or when, positions not trusted and the start not refused, it
   keeps no row with text the last read had at or above the caret, or
@@ -359,9 +364,10 @@ every new line goes to Core.
   written back within the time a gone row lingers, a listed limit).
 - The time limits (`books/dev/src/explanation/design/terminal-model.md`, "Every time limit"):
   `KEY_WINDOW_MS` and `TYPED_LIMIT_MS` (300), `VOLATILE_MS` and
-  `UNPROMPTED_MS` (2,000), `QUIET_MS` (1,000), and `quiet_period`, 1
+  `UNPROMPTED_MS` (2,000), and `quiet_period`, 1
   second or 1.5 times the interval between the last two changes when that
-  is longer.
+  is longer. `TerminalReader::keys_pause_end` gives when the keys' pause
+  after a key ends, the one rule Core's pending command mark ends by.
 
 ### How the rules are built
 
@@ -382,7 +388,9 @@ gives what a hold says when it is released. It is used at the timer,
 above the screen, when the caret leaves a held word, and for a held line
 carried above the read. That history moves with the alignment as the
 memory's anchors do; a row rewritten alone starts its hold and change
-history afresh, and a lingering line taken back brings its history. The
+history afresh, and a lingering line taken back brings its history: the
+rules keep only each lingering row's line state, by the number the memory
+gave it, dropped once the memory no longer holds that row. The
 state is trimmed with
 the memory; a line's text, what was said of it, and its row's text are one
 shared string while they are the same, and no history is built for empty

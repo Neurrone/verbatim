@@ -1937,7 +1937,11 @@ held at the next read's start) and the answers to the requests they make;
   read's screen shows no text (`terminal::commands::fresh` says so), or
   says `Message::NoStatusLineFound` outside one.
 - Command marks. Enter on a caret line holding input
-  (`TerminalReader::caret_line_input`) marks the line (`MarkLine`).
+  (`TerminalReader::caret_line_input`) marks the line (`MarkLine`), and
+  the mark stays pending, for the input a program prints elsewhere, until
+  the keys' pause after Enter ends as the rules judge it
+  (`TerminalReader::keys_pause_end`, the quiet period after the key, with
+  no upper bound).
   Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`, with
   `terminal::commands::command_mark`) try the marks beyond the review position, nearest
   first, by their line's hash in the memory and above it with the

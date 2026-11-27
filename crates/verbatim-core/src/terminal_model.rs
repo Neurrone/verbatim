@@ -53,7 +53,7 @@ use verbatim_model::{
     TerminalText, TextAnchor, TraceId,
 };
 use verbatim_text::terminal_reading::{
-    ColourRun, Key, KeyKind, KeyTag, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
+    ColourRun, Key, KeyKind, KeyTag, Settings, Speech, Step, TerminalReader, Unit,
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadStart, ReadText};
 
@@ -285,7 +285,8 @@ impl TerminalModel {
 
     fn give(&mut self, key: &PendingKey) {
         if key.kind == TerminalKeyKind::Enter && self.reader.caret_line_input() {
-            self.mark_caret_line(key.at_ms);
+            let until_ms = self.reader.keys_pause_end(key.at_ms);
+            self.mark_caret_line(until_ms);
         }
         let _ = self.rules().key(rules_key(key));
     }
@@ -318,11 +319,12 @@ impl TerminalModel {
                 .is_some_and(|window| now_ms <= *window.end())
     }
 
-    /// Enter at `at_ms` on the caret's line, which holds input: the line is
-    /// marked at its first row, unless it is already, and noted until the
-    /// quiet period after the key ends, so that the read that shows the
-    /// input printed elsewhere marks it there ("Features and settings").
-    fn mark_caret_line(&mut self, at_ms: u64) {
+    /// Enter on the caret's line, which holds input: the line is marked at
+    /// its first row, unless it is already, and noted until `until_ms`, when
+    /// the keys' pause after the key ends as the rules judge it, so that the
+    /// read that shows the input printed elsewhere marks it there
+    /// ("Features and settings").
+    fn mark_caret_line(&mut self, until_ms: u64) {
         let Some(caret) = self.caret() else {
             return;
         };
@@ -330,7 +332,7 @@ impl TerminalModel {
             return;
         };
         self.keep_mark_line(mark);
-        self.pending_mark = Some((mark, at_ms.saturating_add(QUIET_MS)));
+        self.pending_mark = Some((mark, until_ms));
     }
 
     /// Keeps the line of `mark`, just set on a row the memory keeps.

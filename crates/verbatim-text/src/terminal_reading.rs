@@ -13,7 +13,9 @@
 //! passes keys as they reach the program, and calls [`TerminalReader::timer`]
 //! when the timer it asked for comes due.
 
-use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory, Text};
+use crate::terminal_rows::{
+    LingerId, Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory, Text,
+};
 use std::borrow::Cow;
 
 use crate::proven::{items_in, text_in};
@@ -46,7 +48,7 @@ pub const VOLATILE_MS: u64 = 2000;
 pub const UNPROMPTED_MS: u64 = 2000;
 
 /// The shortest quiet period ("Every time limit").
-pub const QUIET_MS: u64 = 1000;
+const QUIET_MS: u64 = 1000;
 
 /// The quiet period after changes `interval_ms` apart ("Every time limit"): 1
 /// second, or 1.5 times the interval between the last two changes when that
@@ -56,6 +58,13 @@ pub fn quiet_period(interval_ms: Option<u64>) -> u64 {
     interval_ms.map_or(QUIET_MS, |interval| {
         QUIET_MS.max(interval.saturating_mul(3) / 2)
     })
+}
+
+/// When the keys' pause ends after a key reaching the program at `at_ms`,
+/// `interval_ms` after the key before it: the quiet period after that key
+/// ("Rows the keys own").
+fn pause_end(at_ms: u64, interval_ms: Option<u64>) -> u64 {
+    at_ms.saturating_add(quiet_period(interval_ms))
 }
 
 /// The reader's settings. Floods are Core's to split ("Core's flood
@@ -334,7 +343,7 @@ impl Wait {
         match self {
             Self::Nothing => None,
             Self::Word { due_ms } => Some(*due_ms),
-            Self::Keys => keys.map(|(at, interval)| at.saturating_add(quiet_period(interval))),
+            Self::Keys => keys.map(|(at, interval)| pause_end(at, interval)),
             Self::Colours(_) => keys.map(|(at, _)| window_end(at)),
         }
     }
@@ -782,15 +791,6 @@ struct CaretAnswer {
     back: bool,
 }
 
-/// A line found gone, kept while it lingers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-struct Gone {
-    hash: u64,
-    line: Box<LineState>,
-    since_ms: u64,
-}
-
 /// The reading rules for one terminal ("Reading rules").
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -801,7 +801,10 @@ pub struct TerminalReader {
     #[cfg_attr(feature = "serde", serde(skip))]
     segmenter: Segmenter,
     screen: Screen,
-    lingering: Vec<Gone>,
+    /// The line state of each row the memory keeps lingering, by the
+    /// number it gave the row ([`LingerId`]): which rows linger, for how
+    /// long and which came back are the memory's alone.
+    lingering: Vec<(LingerId, Box<LineState>)>,
     keys: KeyWindow,
     focused: bool,
     /// The next read speaks nothing: the first, or the first after the
@@ -897,10 +900,7 @@ impl TerminalReader {
     pub fn key(&mut self, key: Key) -> Step {
         let newest = NewestKey {
             at_ms: key.at_ms,
-            interval_ms: self
-                .keys
-                .newest()
-                .map(|newest| key.at_ms.saturating_sub(newest.at_ms)),
+            interval_ms: self.interval_before(key.at_ms),
             tag: key.tag,
         };
         let keys = match std::mem::replace(&mut self.keys, KeyWindow::Closed { newest: None }) {
@@ -952,6 +952,21 @@ impl TerminalReader {
     /// When the newest key given reached the program.
     fn newest_key_ms(&self) -> Option<u64> {
         self.keys.newest().map(|newest| newest.at_ms)
+    }
+
+    /// The interval before a key reaching the program at `at_ms`, from the
+    /// newest key given before it.
+    fn interval_before(&self, at_ms: u64) -> Option<u64> {
+        self.keys
+            .newest()
+            .map(|newest| at_ms.saturating_sub(newest.at_ms))
+    }
+
+    /// When the keys' pause ends after a key reaching the program at
+    /// `at_ms`, given next ([`pause_end`]), with no upper bound.
+    #[must_use]
+    pub fn keys_pause_end(&self, at_ms: u64) -> u64 {
+        pause_end(at_ms, self.interval_before(at_ms))
     }
 
     /// The window of the newest key: of `pending_ms`, a key the caller holds
@@ -1177,23 +1192,20 @@ impl TerminalReader {
             // With nothing reported nothing waits, so a lost read asks
             // nothing: the memory starts again from it ("The read").
             self.screen = Screen::default();
-            self.lingering.clear();
             outcome = memory.restart(read);
         }
         self.reads = self.reads.saturating_add(1);
         let previous = std::mem::take(&mut self.screen);
-        self.lingering
-            .retain(|gone| now.saturating_sub(gone.since_ms) <= LINGERING_MS);
-        for (from, fate) in outcome.old.iter().enumerate() {
-            if *fate == (OldRow::Gone { lingering: true })
-                && let Some(row) = previous.row(from)
-                && let Some(line) = row.line.clone()
-            {
-                self.lingering.push(Gone {
-                    hash: row.hash,
-                    line,
-                    since_ms: now,
-                });
+        // The memory alone decides which rows linger, for how long, and
+        // which came back ("Lingering"): the line states kept follow it, a
+        // row taken back by this read until its line takes the state.
+        let still_lingering = memory.lingering_ids();
+        self.lingering.retain(|(id, _)| {
+            still_lingering.contains(id) || outcome.returned.iter().any(|&(_, back)| back == *id)
+        });
+        for &(from, id) in &outcome.lingered {
+            if let Some(line) = previous.row(from).and_then(|row| row.line.clone()) {
+                self.lingering.push((id, line));
             }
         }
         // The read's rows, all of them until the read is handled.
@@ -1397,11 +1409,15 @@ impl TerminalReader {
                         previous.row(old)
                     })
                     .and_then(|row| row.line.as_deref().cloned()),
-                Some(NewRow::Returned { .. }) => self
-                    .lingering
+                // The lingering row the memory took back here, by its number.
+                Some(NewRow::Returned { .. }) => outcome
+                    .returned
                     .iter()
-                    .position(|gone| rows.get(first).is_some_and(|row| gone.hash == row.hash))
-                    .map(|at| *self.lingering.remove(at).line),
+                    .find(|&&(row, _)| row == first)
+                    .and_then(|&(_, id)| {
+                        let at = self.lingering.iter().position(|(kept, _)| *kept == id)?;
+                        Some(*self.lingering.remove(at).1)
+                    }),
                 _ => None,
             };
             // A row rewritten alone, away from its neighbours, keeps what it

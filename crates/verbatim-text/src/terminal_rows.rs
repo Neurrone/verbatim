@@ -620,6 +620,13 @@ pub struct Outcome {
     /// Whether the read's first row continues a line that starts above the
     /// read, so the first of [`Outcome::lines`] is that line's rest.
     pub continued: bool,
+    /// The rows of the last read that started to linger, each by its index
+    /// in [`Outcome::old`], with the number the memory gave it.
+    pub lingered: Vec<(usize, LingerId)>,
+    /// The rows of the read that are lingering rows come back
+    /// ([`NewRow::Returned`]), each by its index in [`Outcome::rows`],
+    /// with the number of the lingering row it is.
+    pub returned: Vec<(usize, LingerId)>,
     /// The screen's width in cells.
     pub width: usize,
     /// The screen's height in rows.
@@ -645,10 +652,18 @@ pub enum Lost {
     Uncounted,
 }
 
+/// The number the memory gives a row as it starts to linger, by which the
+/// caller knows which lingering row came back ([`Outcome::lingered`],
+/// [`Outcome::returned`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LingerId(u64);
+
 /// A row that lingers: gone, kept for a while with its history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Lingering {
+    id: LingerId,
     row: Row,
     /// When it was found gone.
     since_ms: u64,
@@ -790,6 +805,14 @@ impl Screen {
         dropped
     }
 
+    /// The rows lingering at `now`: found gone within [`LINGERING_MS`]
+    /// before it ("Lingering"), the one test of a lingering row's age.
+    fn lingering_at(&self, now: u64) -> impl Iterator<Item = &Lingering> {
+        self.lingering
+            .iter()
+            .filter(move |row| now.saturating_sub(row.since_ms) <= LINGERING_MS)
+    }
+
     /// A memory of `rows`, a read whose query gave the screen's height as
     /// `asked`, 0 for a first read, with no history of its own.
     fn fresh(rows: Vec<Row>, read: &Read, (width, height): (usize, usize), asked: usize) -> Self {
@@ -897,6 +920,8 @@ pub struct TerminalMemory {
     /// a read keeps something of the last read with its own screen below
     /// the document's start, or another new screen replaces it.
     aside: Option<Aside>,
+    /// The number the next row to linger gets ([`LingerId`]).
+    next_linger: u64,
     /// The number the next place gets ([`TerminalMemory::add_place`]).
     next_place: u64,
 }
@@ -1089,6 +1114,16 @@ impl TerminalMemory {
         Some(mark)
     }
 
+    /// The rows lingering as the last read left them, by their numbers:
+    /// none before a first read ("Lingering").
+    #[must_use]
+    pub fn lingering_ids(&self) -> Vec<LingerId> {
+        self.screen
+            .as_ref()
+            .map(|screen| screen.lingering.iter().map(|row| row.id).collect())
+            .unwrap_or_default()
+    }
+
     /// The command mark [`TerminalMemory::add_mark`] set or returned last,
     /// where it is now: followed across reads as every mark is, and `None`
     /// once it is dropped, by a read or [`TerminalMemory::replace_mark`].
@@ -1212,6 +1247,7 @@ impl TerminalMemory {
         // rows above the read a count read counts first; without, the
         // caller starts the memory again.
         let lost = !trusted && !refused && had_text && (aligned.lost() || aligned.ambiguous);
+        let at = ((width, height), caret);
         if nothing || lost {
             let (aligned, lost) = match read.start {
                 _ if lost && aligned.ambiguous && report => (
@@ -1236,15 +1272,17 @@ impl TerminalMemory {
                 by_text: true,
                 ..shape
             };
-            let mut next = remember(&current, rows, &aligned, read, (width, height), caret);
+            let (mut next, lingered) =
+                remember(&current, (rows, &aligned, read), at, &mut self.next_linger);
             if !refused {
                 keep_places(&mut next, &current, &aligned);
             }
-            return self.finish(&current, next, &aligned, &shape, Switch::None);
+            return self.finish(&current, (next, lingered), &aligned, &shape, Switch::None);
         }
         self.drop_aside(&aligned, read);
-        let next = remember(&current, rows, &aligned, read, (width, height), caret);
-        self.finish(&current, next, &aligned, &shape, Switch::None)
+        let (next, lingered) =
+            remember(&current, (rows, &aligned, read), at, &mut self.next_linger);
+        self.finish(&current, (next, lingered), &aligned, &shape, Switch::None)
     }
 
     /// Whether the aside screen is in `rows` ([`Aside::found`]).
@@ -1291,12 +1329,12 @@ impl TerminalMemory {
         outcome
     }
 
-    /// The memory after a read aligned with `current`, as `next`, and the
-    /// outcome.
+    /// The memory after a read aligned with `current`, as `next`, with the
+    /// rows that started to linger, `lingered`, and the outcome.
     fn finish(
         &mut self,
         current: &Screen,
-        mut next: Screen,
+        (mut next, lingered): (Screen, Vec<(usize, LingerId)>),
         aligned: &Aligned,
         shape: &Outcome,
         switch: Switch,
@@ -1350,6 +1388,8 @@ impl TerminalMemory {
             rotation: aligned.rotation,
             switch,
             continued,
+            lingered,
+            returned: aligned.returned.clone(),
             ..*shape
         };
         self.screen = Some(next);
@@ -1395,6 +1435,9 @@ impl TerminalMemory {
             lines: lines(&next.rows),
             switch: Switch::New,
             lost: None,
+            // A new screen keeps no lingering row.
+            lingered: Vec::new(),
+            returned: Vec::new(),
             ..*shape
         };
         self.screen = Some(next);
@@ -1433,6 +1476,9 @@ impl TerminalMemory {
             rows: vec![NewRow::New; next.rows.len()],
             old: vec![OldRow::Gone { lingering: false }; total],
             lines: lines(&next.rows),
+            // Starting again keeps no lingering row.
+            lingered: Vec::new(),
+            returned: Vec::new(),
             ..*shape
         };
         self.screen = Some(next);
@@ -1526,6 +1572,10 @@ struct Aligned {
     /// rows above the read, so an anchor there is found by its text ("The
     /// review cursor").
     refused: bool,
+    /// Each row of the read that is a lingering row come back, by its
+    /// index, with the number of the lingering row it is: the nearest with
+    /// its text, chosen once ("Lingering").
+    returned: Vec<(usize, LingerId)>,
 }
 
 impl Aligned {
@@ -2271,17 +2321,17 @@ fn classify(
         }
     }
     let skip = isize_of(memory.skipped);
-    let mut lingering: Vec<(isize, u64)> = memory
-        .lingering
-        .iter()
-        .filter(|row| read.at_ms.saturating_sub(row.since_ms) <= LINGERING_MS)
+    let mut lingering: Vec<(isize, u64, LingerId)> = memory
+        .lingering_at(read.at_ms)
         .map(|row| {
             (
                 row.at.saturating_sub(skip).saturating_add(fixed),
                 row.row.hash,
+                row.id,
             )
         })
         .collect();
+    let mut returned = Vec::new();
     for (to, (kind, row)) in new.iter_mut().zip(rows).enumerate() {
         if *kind != NewRow::New || row.is_blank() {
             continue;
@@ -2289,13 +2339,14 @@ fn classify(
         let nearest = lingering
             .iter()
             .enumerate()
-            .filter(|(_, (_, hash))| *hash == row.hash)
-            .min_by_key(|(_, (at, _))| at.saturating_sub(isize_of(to)).unsigned_abs())
-            .map(|(index, &(at, _))| (index, at));
-        if let Some((index, at)) = nearest {
+            .filter(|(_, (_, hash, _))| *hash == row.hash)
+            .min_by_key(|(_, (at, _, _))| at.saturating_sub(isize_of(to)).unsigned_abs())
+            .map(|(index, &(at, _, id))| (index, at, id));
+        if let Some((index, at, id)) = nearest {
             *kind = NewRow::Returned {
                 moved: at != isize_of(to),
             };
+            returned.push((to, id));
             lingering.remove(index);
         }
     }
@@ -2321,66 +2372,59 @@ fn classify(
         ambiguous: false,
         left: read.at_document_start,
         refused,
+        returned,
     }
 }
 
 /// The memory after a read aligned with `memory`: its rows, each with its
 /// history carried from the old row it was, the lingering rows, the
-/// remembered history and the anchors.
+/// remembered history and the anchors; and the rows of the last read that
+/// started to linger, each by its index in [`Outcome::old`] with the
+/// number `next_linger` gave it.
 fn remember(
     memory: &Screen,
-    mut rows: Vec<Row>,
-    aligned: &Aligned,
-    read: &Read,
-    (width, height): (usize, usize),
-    caret: Option<usize>,
-) -> Screen {
+    (mut rows, aligned, read): (Vec<Row>, &Aligned, &Read),
+    ((width, height), caret): ((usize, usize), Option<usize>),
+    next_linger: &mut u64,
+) -> (Screen, Vec<(usize, LingerId)>) {
     let now = read.at_ms;
     let skip = isize_of(memory.skipped);
     // Where a row of the last read that did not move is now, counted as
     // the last read's rows are.
     let shift = aligned.fixed.saturating_sub(skip);
+    // The lingering rows the alignment took back are no longer lingering.
     let mut lingering: Vec<Lingering> = memory
-        .lingering
-        .iter()
-        .filter(|row| now.saturating_sub(row.since_ms) <= LINGERING_MS)
+        .lingering_at(now)
+        .filter(|row| aligned.returned.iter().all(|&(_, id)| id != row.id))
         .map(|row| Lingering {
             at: row.at.saturating_add(shift),
             ..row.clone()
         })
         .collect();
     // The alignment has a kind for each of the read's rows.
-    for (to, (kind, row)) in aligned.new.iter().zip(&mut rows).enumerate() {
+    for (kind, row) in aligned.new.iter().zip(&mut rows) {
         match *kind {
             NewRow::Kept { from, .. } | NewRow::Grown { from } => {
                 row.redrawn = memory.rows.get(from).is_some_and(|old| old.redrawn);
             }
-            NewRow::Rewritten { .. } => row.redrawn = true,
-            NewRow::Returned { .. } => {
-                // The lingering row it is, taken back.
-                if let Some(index) = lingering
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, gone)| gone.row.hash == row.hash)
-                    .min_by_key(|(_, gone)| gone.at.saturating_sub(isize_of(to)).unsigned_abs())
-                    .map(|(index, _)| index)
-                {
-                    lingering.remove(index);
-                }
-                row.redrawn = true;
-            }
+            NewRow::Rewritten { .. } | NewRow::Returned { .. } => row.redrawn = true,
             NewRow::New | NewRow::Shown => {}
         }
     }
+    let mut lingered = Vec::new();
     for (from, fate) in aligned.old.iter().enumerate() {
         if *fate == (OldRow::Gone { lingering: true })
             && let Some(row) = memory.rows.get(from)
         {
+            let id = LingerId(*next_linger);
+            *next_linger = next_linger.saturating_add(1);
             lingering.push(Lingering {
+                id,
                 row: row.clone(),
                 since_ms: now,
                 at: isize_of(from).saturating_add(aligned.fixed),
             });
+            lingered.push((from.saturating_add(memory.skipped), id));
         }
     }
     let read_caret = ReadCaret::of(&rows, caret, read);
@@ -2423,7 +2467,7 @@ fn remember(
             map_anchor(anchor, memory, aligned, &fates, &next, read).map(|anchor| (number, anchor))
         })
         .collect();
-    next
+    (next, lingered)
 }
 
 /// An anchor on row `row` of `rows`, at `column` clamped to its text;

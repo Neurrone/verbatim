@@ -444,6 +444,27 @@ fn a_row_changed_at_two_reads_in_a_row_after_waiting_for_speech_is_volatile() {
 }
 
 #[test]
+fn a_returned_row_takes_its_own_line_state_among_equal_lingering_rows() {
+    // Two rows below the caret both read "W 2s": the upper heard as "W 2s",
+    // the lower last heard as "Q 9s", its change back to "W 2s" held as
+    // volatile ("Volatile rows"). Both are erased and linger; only the
+    // lower is drawn again, so the row coming back is the lower, the
+    // nearest with its text ("Lingering"), with its own line state: its
+    // held change is still due once the row has been still for the quiet
+    // period, and is spoken then. Taking the upper row's state lost it.
+    let mut term = Term::new(20, 6, 10);
+    term.write("$\r\nW 1s\r\nW 1s\x1b[1;2H", 100);
+    term.write("\x1b[3;1H\x1b[2KQ 9s\x1b[1;2H", 600);
+    term.write("\x1b[2;1H\x1b[2KW 2s\x1b[3;1H\x1b[2KW 2s\x1b[1;2H", 1100);
+    assert_eq!(term.write("\x1b[2;1H\x1b[J\x1b[1;2H", 1200), quiet(None));
+    assert_eq!(
+        term.write("\x1b[3;1HW 2s\x1b[1;2H", 1300),
+        quiet(Some(2100))
+    );
+    assert_eq!(term.reader.timer(2100), says(vec![changed(2, "W 2s")]));
+}
+
+#[test]
 fn a_row_that_only_lost_text_is_silent_until_it_is_drawn_again() {
     let mut term = Term::new(20, 4, 10);
     term.write("Loading 50%", 100);

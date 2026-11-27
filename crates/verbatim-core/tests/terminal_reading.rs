@@ -1201,6 +1201,60 @@ fn input_printed_after_the_quiet_period_is_not_marked() {
     assert_eq!(session.heard(), []);
 }
 
+/// Pi's editor with "hi there" typed a key every `gap_ms` from 1 second,
+/// then Enter `enter_gap_ms` after the last key; returns Enter's time.
+fn typed_into_pi(session: &mut Session, gap_ms: u64, enter_gap_ms: u64) -> u64 {
+    let mut at_ms = 1000;
+    for character in "hi there".chars() {
+        let (_, input) = typed(&character.to_string(), at_ms);
+        session.press(&input);
+        session.write(&character.to_string(), at_ms + 5);
+        at_ms += gap_ms;
+    }
+    let enter_ms = at_ms - gap_ms + enter_gap_ms;
+    let (_, input) = typed("\r", enter_ms);
+    session.press(&input);
+    enter_ms
+}
+
+#[test]
+fn input_printed_within_a_slow_typists_quiet_period_is_marked() {
+    // Keys a second apart make the quiet period one and a half seconds
+    // ("Volatile rows"): input Pi prints 1.2 seconds after Enter is within
+    // it, and marked ("Moving by command").
+    let mut session = showing(
+        30,
+        8,
+        100,
+        "transcript\r\n---\r\n\r\n---\r\nfooter\x1b[3;1H",
+    );
+    let at_ms = typed_into_pi(&mut session, 1000, 1000);
+    session.write("\x1b[2K\r", at_ms + 100);
+    session.write("\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 1200);
+    let _ = session.heard();
+    session.press(&command(UP));
+    assert_eq!(session.heard(), plain(&["hi there"]));
+}
+
+#[test]
+fn an_enter_long_after_the_previous_key_keeps_its_mark_pending_for_its_quiet_period() {
+    // Enter 10 seconds after the last key makes the quiet period 15
+    // seconds ("Volatile rows"), which has no upper bound: input printed 14
+    // seconds after Enter is still marked ("Moving by command").
+    let mut session = showing(
+        30,
+        8,
+        100,
+        "transcript\r\n---\r\n\r\n---\r\nfooter\x1b[3;1H",
+    );
+    let at_ms = typed_into_pi(&mut session, 10, 10_000);
+    session.write("\x1b[2K\r", at_ms + 100);
+    session.write("\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 14_000);
+    let _ = session.heard();
+    session.press(&command(UP));
+    assert_eq!(session.heard(), plain(&["hi there"]));
+}
+
 #[test]
 fn a_mark_above_the_memory_is_found_by_one_search() {
     let mut session = showing(30, 4, 100, "$ ");
