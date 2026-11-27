@@ -108,6 +108,58 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     );
 }
 
+#[test]
+fn a_line_move_at_the_bottom_while_typing_is_echoed_says_bottom_and_the_line() {
+    // The review cursor on the caret's line, the bottom line, then "x"
+    // typed and shown with no change told, and Review next line in its
+    // key's window: the press's fresh read echoes the typing and the review
+    // cursor follows the caret, and the move, which cannot go lower, says
+    // "Bottom" and the line, as NVDA's review next line does at the bottom
+    // (`nvda/source/globalCommands.py` 2001 to 2026).
+    let mut session = showing(20, 4, 100, "one\r\n$ ");
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["$"]));
+    let (trace, key) = typed("x", 1000);
+    session.press(&key);
+    session.outpost.sim.write(b"x");
+    session.at_ms = 1050;
+    // The current line's fresh read; the typed key asked nothing.
+    assert_eq!(session.requests(), [FRESH]);
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(
+        session.heard(),
+        [said(Some(trace), "x"), said(None, "Message(Bottom) $ x")]
+    );
+    assert_eq!(session.requests(), [FRESH]);
+}
+
+#[test]
+fn a_line_move_starts_where_its_fresh_read_left_the_review_cursor() {
+    // A full-screen program's four rows, the caret on the second and the
+    // review cursor moved to the bottom; a typed key moves the program's
+    // cursor to the first row, unread. Review next line in its window: the
+    // press's fresh read follows the caret, so the move starts from the
+    // caret's line and says the row below it, and the review cursor stays
+    // there, as NVDA, whose caret event lands before its review script,
+    // speaks from the caret's line (`nvda/source/globalCommands.py` 2001 to
+    // 2026).
+    let mut session = showing(20, 4, 100, "r1\r\nr2\r\nr3\r\nr4\x1b[2;1H");
+    session.press(&command(ReviewCommand::ReviewBottom));
+    assert_eq!(session.heard(), plain(&["r4"]));
+    let (trace, key) = typed("x", 1000);
+    session.press(&key);
+    session.outpost.sim.write(b"\x1b[1;1H");
+    session.at_ms = 1050;
+    assert_eq!(session.requests(), [FRESH]);
+    // The fresh read answers the key with the line the caret moved to
+    // (rule 19), then the move says the row below it.
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), [said(Some(trace), "r1"), said(None, "r2")]);
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["r2"]));
+    assert_eq!(session.requests(), [FRESH, FRESH]);
+}
+
 /// A terminal of four rows whose review position is on "two", in the
 /// history above the rows the memory keeps, with nine lines printed below
 /// it and seven above it, so that no history read below reaches the

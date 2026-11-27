@@ -376,8 +376,20 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
         Found::On(on) => on.window,
     };
     let due_us = cx.due_in(OTHER_DUE_US);
+    // A review of the focused terminal takes its fresh read before the
+    // press chooses where it starts, so that it starts where that read
+    // left the review cursor, at the caret when it followed it, as NVDA's
+    // caret event lands before its review script runs.
+    let node = cx.facts().navigator_object().map(|object| object.id);
+    let fresh = match node {
+        Some(node) if crate::terminal::reading::modelled(&cx.facts()) == Some(node) => {
+            crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
+            true
+        }
+        _ => false,
+    };
     let next = begin(&mut cx.facts_mut(), press);
-    run_next(cx, (press, fence), window, next, (due_us, false)).await;
+    run_next(cx, (press, fence), window, next, (due_us, fresh)).await;
 }
 
 /// Runs a review press from `next` on: each read of its text, or the live
@@ -1642,24 +1654,11 @@ fn land(
     chunk: verbatim_model::TextChunk,
 ) -> Vec<Effect> {
     let grid = navigator_grid(state);
-    if let Some(edge) = landing.edge
-        && moved == 0
-    {
-        let position = match state.navigator.as_ref().map(|navigator| &navigator.text) {
-            Some(ReviewText::At(position)) => position.clone(),
-            // Flat text answers a move that could not move with the
-            // review cursor's own line.
-            Some(ReviewText::Flat(at)) => ReviewPosition {
-                offset: text::byte_offset(chunk.offset),
-                column: at.column,
-                line: Arc::new(chunk),
-            },
-            _ => return Vec::new(),
-        };
-        let content = text::line_content(&position.line.text, grid);
-        let segments = text::text_segments(content, position.line.language_at(0));
-        return vec![speak(trace_id, with_edge(edge, segments))];
-    }
+    // A move that could not move lands as any move does, on the line its
+    // answer read, and says the edge before it, as NVDA's review line
+    // scripts do (`docs/parity/review.md`): the answer is the one place
+    // the position is written from.
+    let edge = landing.edge.filter(|_| moved == 0);
     let line = Arc::new(chunk);
     let content = text::line_content(&line.text, grid);
     let position = match landing.place {
@@ -1684,6 +1683,10 @@ fn land(
             language,
         ),
         _ => text::text_segments(content, line.language_at(0)),
+    };
+    let segments = match edge {
+        Some(edge) => with_edge(edge, segments),
+        None => segments,
     };
     set_position(state, position);
     vec![speak(trace_id, segments)]
