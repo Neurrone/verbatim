@@ -13,6 +13,9 @@ A review checks a finished change, or a design, against the code, NVDA's pinned 
 - An addition to shared machinery (a kind of request or reply, a queue hook, a copied fact) that the change does not need.
 - A document that describes removed code, or a decision attributed to Dickson that he did not take.
 - A removal that something still depends on.
+- A fact the change writes, copies or judges whose other writers and readers are not accounted for. The reviewer lists them with a grep, inside the diff and outside it, and gives one sequence through each. A holder of the same fact that the change does not update is a must-fix, because 15 of 18 recent defects in the 2026-11-27 audit came from a reader or writer outside the diff.
+- A default (`unwrap_or`, `unwrap_or_default`, 0, the first index, an empty string) on a value that can be missing for a reason outside Verbatim's code: another process, the system, a file or the user.
+- A rule that decides a fact another function already decides. The change calls that function or replaces both.
 
 ## What a finding carries
 
