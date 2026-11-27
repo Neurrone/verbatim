@@ -6,8 +6,11 @@
 # 45944007285, 46010625495, 46012487187), and with that stopped, Windows
 # Update's orchestrator ran with the disks' queue at 3 (run 46024262485).
 # Each service is disabled, so nothing restarts it during the job, and
-# stopped (Dickson, 2026-11-27; docs/flaky-tests.md). A service the image
-# lacks is skipped and named in the log.
+# stopped (Dickson, 2026-11-27; docs/flaky-tests.md). The Storage Service
+# must stop, as it did on every image so far; Windows may refuse to change
+# Windows Update's services, and a refusal is reported as a warning on the
+# run, naming the service and the error, rather than failing the job. A
+# service the image lacks is skipped and named in the log.
 name: Quiet the runner
 description: Disables and stops the runner image's Storage Service and Windows Update services.
 runs:
@@ -18,10 +21,15 @@ runs:
       run: |
         foreach ($name in 'StorSvc', 'UsoSvc', 'wuauserv') {
           $service = Get-Service -Name $name -ErrorAction SilentlyContinue
-          if (-not $service) { Write-Host "$name: not on this image"; continue }
-          Set-Service -Name $name -StartupType Disabled
-          Stop-Service -Name $name -Force
-          $service = Get-Service -Name $name
-          if ($service.Status -ne 'Stopped') { throw "$name is $($service.Status), not stopped" }
-          Write-Host "$name: stopped and disabled"
+          if (-not $service) { Write-Host "${name}: not on this image"; continue }
+          try {
+            Set-Service -Name $name -StartupType Disabled -ErrorAction Stop
+            Stop-Service -Name $name -Force -ErrorAction Stop
+            $status = (Get-Service -Name $name).Status
+            if ($status -ne 'Stopped') { throw "it is $status" }
+            Write-Host "${name}: stopped and disabled"
+          } catch {
+            if ($name -eq 'StorSvc') { throw "${name} was not stopped: $_" }
+            Write-Host "::warning title=Quiet the runner::${name} was not stopped: $_"
+          }
         }
