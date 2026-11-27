@@ -92,13 +92,17 @@ impl ThemeHost for AppThemeHost {
             trace_id: utterance.trace_id,
             segments: utterance.segments,
         };
-        let _ = self.commands.send(ShellCommand::Input(Box::new(input)));
+        let _ = self
+            .commands
+            .send(ShellCommand::Input(Box::new(crate::arrived(input))));
     }
 
     /// A preview of an event, through the reducer.
     fn play_earcon(&self, earcon: Earcon) {
         let input = Input::PreviewEarcon(earcon);
-        let _ = self.commands.send(ShellCommand::Input(Box::new(input)));
+        let _ = self
+            .commands
+            .send(ShellCommand::Input(Box::new(crate::arrived(input))));
     }
 }
 
@@ -139,8 +143,8 @@ pub(crate) fn prepare(
 /// Tells the reducer the details `theme` reports (`Input::Reported`).
 pub(crate) fn send_reported(commands: &Commands, theme: &ActiveTheme) {
     if commands
-        .send(ShellCommand::Input(Box::new(Input::Reported(
-            theme.reported(),
+        .send(ShellCommand::Input(Box::new(crate::arrived(
+            Input::Reported(theme.reported()),
         ))))
         .is_err()
     {

@@ -333,7 +333,17 @@ impl std::ops::DerefMut for Held {
 /// each request sent by its reader and kind, each utterance by its
 /// segments, every other effect left out.
 pub(crate) fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    read_as_a_test(feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap())
+    read_as_a_test(
+        feed(
+            &mut held.state,
+            &mut held.runtime,
+            Timed {
+                now: crate::now::Now::from_raw(at_us),
+                input,
+            },
+        )
+        .unwrap(),
+    )
 }
 
 /// Core's wake at `at_us` as the shell feeds it, with `in_front` what it
@@ -349,7 +359,10 @@ pub(crate) fn due_at(
         crate::entries::route(
             &mut held.state,
             &mut held.runtime,
-            (verbatim_model::TraceId::from_raw(1), at_us),
+            (
+                verbatim_model::TraceId::from_raw(1),
+                crate::now::Now::from_raw(at_us),
+            ),
             &verbatim_model::request::QueueInput::Due { in_front },
         )
         .said(),
@@ -396,7 +409,15 @@ fn read_as_a_test(effects: Vec<Said>) -> Vec<String> {
 
 /// The requests sent at `at_us` by `input`, by number, and what it said.
 pub(crate) fn sent_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> (Vec<u64>, Vec<String>) {
-    let effects = feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap();
+    let effects = feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap();
     let numbers = effects
         .iter()
         .filter_map(|effect| match effect {
@@ -614,14 +635,14 @@ pub(crate) fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) 
 /// `instance` made ready at `at_us`: its start set up as the owner thread
 /// reports it, then its `Ready`; what the step said.
 pub(crate) fn ready_at(held: &mut Held, at_us: u64, instance: Instance) -> Vec<String> {
-    held.state.queue.start_for_tests(instance);
+    held.state.queue.start_for_tests(instance, at_us);
     feed_at(held, at_us, Input::ReaderReady(instance))
 }
 
 pub(crate) fn ready() -> Held {
     let mut state = Held::default();
-    state.queue.start_for_tests(LISTENER);
-    state.queue.start_for_tests(OUTPOST);
+    state.queue.start_for_tests(LISTENER, 0);
+    state.queue.start_for_tests(OUTPOST, 0);
     assert_eq!(
         feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
         NOTHING
@@ -759,22 +780,29 @@ fn sent_completion(
     at_us: u64,
     input: Input<Entry>,
 ) -> Option<(Route, Vec<KnownAncestor>)> {
-    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
-        .into_iter()
-        .find_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
-                Question::Batch(batch) => batch.steps.into_iter().find_map(|step| match step.op {
-                    Op::FocusRead {
-                        subject: Subject::Route(route),
-                        known,
-                        ..
-                    } => Some((*route, known)),
-                    _ => None,
-                }),
-            },
-            _ => None,
-        })
+    feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .find_map(|effect| match effect {
+        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
+            Question::Batch(batch) => batch.steps.into_iter().find_map(|step| match step.op {
+                Op::FocusRead {
+                    subject: Subject::Route(route),
+                    known,
+                    ..
+                } => Some((*route, known)),
+                _ => None,
+            }),
+        },
+        _ => None,
+    })
 }
 
 /// The listener's answer to its walk `number`, [`listener_answer`] with
@@ -915,7 +943,7 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
             &mut cloned.state,
             &mut cloned.runtime,
             Timed {
-                at_us: 3_000,
+                now: crate::now::Now::from_raw(3_000),
                 input,
             }
         )
@@ -1161,10 +1189,12 @@ fn a_background_value_change_is_judged_with_the_setting_at_its_arrival() {
             from: OUTPOST,
             tell: Box::new(tell),
         };
-        let queued = verbatim_model::Input::Queue {
-            trace_id: TraceId::from_raw(5),
+        let queued = verbatim_model::Arrival {
             at_us: 2_500,
-            input,
+            input: verbatim_model::Input::Queue {
+                trace_id: TraceId::from_raw(5),
+                input,
+            },
         };
         let _ = crate::reduce(&mut state.state, &mut state.runtime, &queued);
         state.settings.report_background_progress_bars = !on_at_arrival;
@@ -1627,13 +1657,15 @@ fn an_executed_focus_runs_under_its_tells_trace_and_takes_its_top_ancestor_as_fo
 fn the_reducer_routes_a_tell_into_the_queue_and_asks_to_be_woken_at_its_due_time() {
     use verbatim_model::request::{QueueEffect, QueueInput};
     let mut held = Held::default();
-    let queued = |input| verbatim_model::Input::Queue {
-        trace_id: verbatim_model::TraceId::from_raw(5),
+    let queued = |input| verbatim_model::Arrival {
         at_us: 1_000,
-        input,
+        input: verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(5),
+            input,
+        },
     };
-    held.state.queue.start_for_tests(LISTENER);
-    held.state.queue.start_for_tests(OUTPOST);
+    held.state.queue.start_for_tests(LISTENER, 0);
+    held.state.queue.start_for_tests(OUTPOST, 0);
     let effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
@@ -1737,10 +1769,12 @@ fn shell_feeds(
     let mut effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
-        &verbatim_model::Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(5),
+        &verbatim_model::Arrival {
             at_us,
-            input,
+            input: verbatim_model::Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(5),
+                input,
+            },
         },
     );
     effects.retain(|effect| {
@@ -1805,7 +1839,7 @@ fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
 fn taskbar_read_out() -> Held {
     use verbatim_model::request::QueueEffect;
     let mut held = Held::default();
-    held.state.queue.start_for_tests(EXPLORER);
+    held.state.queue.start_for_tests(EXPLORER, 0);
     let _ = shell_feeds(
         &mut held,
         1_000,
@@ -2020,7 +2054,7 @@ fn an_executed_focus_is_the_control_planes_focus_change() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 2_000,
+            now: crate::now::Now::from_raw(2_000),
             input,
         },
     )
@@ -2065,7 +2099,10 @@ fn routed(held: &mut Held, at_us: u64, input: &verbatim_model::request::QueueInp
     crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (verbatim_model::TraceId::from_raw(1), at_us),
+        (
+            verbatim_model::TraceId::from_raw(1),
+            crate::now::Now::from_raw(at_us),
+        ),
         input,
     )
     .said()

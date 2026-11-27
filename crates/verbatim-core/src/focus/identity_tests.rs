@@ -735,7 +735,7 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
     let _ = crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), 3_100),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(3_100)),
         &switch(false),
     );
     assert_eq!(
@@ -745,14 +745,14 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
     let _ = crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), 4_000),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(4_000)),
         &switch(true),
     );
     let due = 4_000 + crate::input_desktop::RETURN_DELAY_US;
     let _ = crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), due),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(due)),
         &QueueInput::Due { in_front: None },
     );
     assert_eq!(
@@ -848,7 +848,7 @@ fn a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing() {
         &mut held.state,
         &mut held.runtime,
         Timed {
-            at_us: 1_000,
+            now: crate::now::Now::from_raw(1_000),
             input: entry(tell),
         },
     )
@@ -922,9 +922,15 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
                 found(&held, OUTPOST, number, reply)
             }
         };
-        let effects =
-            crate::entries::feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-                .unwrap();
+        let effects = crate::entries::feed(
+            &mut held.state,
+            &mut held.runtime,
+            Timed {
+                now: crate::now::Now::from_raw(at_us),
+                input,
+            },
+        )
+        .unwrap();
         for effect in effects {
             match effect {
                 Effect::Queue(QueueEffect::Send { ask, .. }) => {

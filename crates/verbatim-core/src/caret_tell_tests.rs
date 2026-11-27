@@ -121,7 +121,15 @@ struct Step {
 }
 
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
-    let effects = feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap();
+    let effects = feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap();
     let mut step = Step::default();
     for effect in effects {
         match effect {
@@ -908,7 +916,7 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
         &mut held.state,
         &mut held.runtime,
         Timed {
-            at_us: 10_000,
+            now: crate::now::Now::from_raw(10_000),
             input: entry(msaa_tell(object)),
         },
     )

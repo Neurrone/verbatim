@@ -44,22 +44,28 @@ fn said(trace_id: TraceId, priority: SpeechPriority, content: SegmentContent) ->
     )
 }
 
-fn effects_of(input: &Input) -> Vec<Effect> {
+fn effects_of(arrival: &verbatim_model::Arrival) -> Vec<Effect> {
     reduce(
         &mut SrState::new(),
         &mut verbatim_core::Runtime::default(),
-        input,
+        arrival,
     )
 }
 
 #[test]
 fn the_start_and_error_sounds_play_their_earcons() {
     assert_eq!(
-        effects_of(&Input::Started),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Started,
+        }),
         [Effect::PlayEarcon(Earcon::Start)]
     );
     assert_eq!(
-        effects_of(&Input::ErrorLogged),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ErrorLogged,
+        }),
         [Effect::PlayEarcon(Earcon::Error)]
     );
 }
@@ -74,7 +80,10 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
         reduce(
             &mut state,
             &mut verbatim_core::Runtime::default(),
-            &Input::Exiting { replaced: false }
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::Exiting { replaced: false },
+            }
         ),
         [Effect::StopSpeech, Effect::PlayEarcon(Earcon::Exit)]
     );
@@ -82,7 +91,10 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
         reduce(
             &mut state,
             &mut verbatim_core::Runtime::default(),
-            &Input::ErrorLogged
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::ErrorLogged,
+            }
         ),
         []
     );
@@ -91,7 +103,10 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
         reduce(
             &mut state,
             &mut verbatim_core::Runtime::default(),
-            &Input::Exiting { replaced: true }
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::Exiting { replaced: true },
+            }
         ),
         []
     );
@@ -99,7 +114,10 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
         reduce(
             &mut state,
             &mut verbatim_core::Runtime::default(),
-            &Input::ErrorLogged
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::ErrorLogged,
+            }
         ),
         []
     );
@@ -109,13 +127,15 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
 fn a_lock_keys_new_state_is_said_interrupting() {
     let trace_id = TraceId::from_raw(1);
     assert_eq!(
-        effects_of(&Input::Queue {
-            trace_id,
+        effects_of(&verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::LockKeyRead {
-                key: LockKey::ScrollLock,
-                on: true
-            }
+            input: Input::Queue {
+                trace_id,
+                input: verbatim_model::request::QueueInput::LockKeyRead {
+                    key: LockKey::ScrollLock,
+                    on: true
+                }
+            },
         }),
         [said(
             trace_id,
@@ -132,12 +152,15 @@ fn a_lock_keys_new_state_is_said_interrupting() {
 fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
     let trace_id = TraceId::from_raw(2);
     let key = KeySeq::new(4);
-    let clock = |repeat| Input::ClockRead {
-        trace_id,
-        repeat,
-        key,
-        time: Some("10:30 AM".to_owned()),
-        date: Some("Saturday, October 24, 2026".to_owned()),
+    let clock = |repeat| verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::ClockRead {
+            trace_id,
+            repeat,
+            key,
+            time: Some("10:30 AM".to_owned()),
+            date: Some("Saturday, October 24, 2026".to_owned()),
+        },
     };
     // Each carries the gesture's key number, handed back with the read.
     let for_key = |effect| match effect {
@@ -162,12 +185,15 @@ fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
     );
     // One the system could not format says nothing.
     assert_eq!(
-        effects_of(&Input::ClockRead {
-            trace_id,
-            repeat: 0,
-            key,
-            time: None,
-            date: Some("Saturday".to_owned()),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ClockRead {
+                trace_id,
+                repeat: 0,
+                key,
+                time: None,
+                date: Some("Saturday".to_owned()),
+            },
         }),
         []
     );
@@ -177,10 +203,13 @@ fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
 fn a_copy_is_confirmed_with_its_text_or_said_to_have_failed() {
     let trace_id = TraceId::from_raw(3);
     assert_eq!(
-        effects_of(&Input::ClipboardCopied {
-            trace_id,
-            text: "Name".to_owned(),
-            copied: true,
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ClipboardCopied {
+                trace_id,
+                text: "Name".to_owned(),
+                copied: true,
+            },
         }),
         [said(
             trace_id,
@@ -189,10 +218,13 @@ fn a_copy_is_confirmed_with_its_text_or_said_to_have_failed() {
         )]
     );
     assert_eq!(
-        effects_of(&Input::ClipboardCopied {
-            trace_id,
-            text: "Name".to_owned(),
-            copied: false,
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ClipboardCopied {
+                trace_id,
+                text: "Name".to_owned(),
+                copied: false,
+            },
         }),
         [said(
             trace_id,
@@ -206,9 +238,12 @@ fn a_copy_is_confirmed_with_its_text_or_said_to_have_failed() {
 fn a_shell_item_gone_is_said_queued() {
     let trace_id = TraceId::from_raw(4);
     assert_eq!(
-        effects_of(&Input::ShellItemGone {
-            trace_id,
-            name: "Clock".to_owned(),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ShellItemGone {
+                trace_id,
+                name: "Clock".to_owned(),
+            },
         }),
         [said(
             trace_id,
@@ -222,9 +257,12 @@ fn a_shell_item_gone_is_said_queued() {
 fn a_shell_item_unclickable_is_said_queued() {
     let trace_id = TraceId::from_raw(5);
     assert_eq!(
-        effects_of(&Input::ShellItemUnclickable {
-            trace_id,
-            name: "Clock".to_owned(),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ShellItemUnclickable {
+                trace_id,
+                name: "Clock".to_owned(),
+            },
         }),
         [said(
             trace_id,
@@ -241,7 +279,10 @@ fn a_shell_item_unclickable_is_said_queued() {
 fn an_action_blocked_by_a_message_box_is_said_next() {
     let trace_id = TraceId::from_raw(7);
     assert_eq!(
-        effects_of(&Input::BlockedByMessageBox { trace_id }),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::BlockedByMessageBox { trace_id },
+        }),
         [said(
             trace_id,
             SpeechPriority::Next,
@@ -254,11 +295,14 @@ fn an_action_blocked_by_a_message_box_is_said_next() {
 fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
     let trace_id = TraceId::from_raw(6);
     assert_eq!(
-        effects_of(&Input::PreviewSpeech {
-            trace_id,
-            segments: vec![UtteranceSegment::new(SegmentContent::Label(
-                "Sample".to_owned()
-            ))],
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::PreviewSpeech {
+                trace_id,
+                segments: vec![UtteranceSegment::new(SegmentContent::Label(
+                    "Sample".to_owned()
+                ))],
+            },
         }),
         [said(
             trace_id,
@@ -267,7 +311,10 @@ fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
         )]
     );
     assert_eq!(
-        effects_of(&Input::PreviewEarcon(Earcon::Exit)),
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::PreviewEarcon(Earcon::Exit),
+        }),
         [Effect::PlayEarcon(Earcon::Exit)]
     );
 }
@@ -538,19 +585,24 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     let _ = reduce(
         &mut desk.state,
         &mut desk.runtime,
-        &Input::Settings(verbatim_model::ReaderSettings {
-            speak_typed_characters: verbatim_model::TypingEcho::Always,
-            ..verbatim_model::ReaderSettings::default()
-        }),
+        &verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Settings(verbatim_model::ReaderSettings {
+                speak_typed_characters: verbatim_model::TypingEcho::Always,
+                ..verbatim_model::ReaderSettings::default()
+            }),
+        },
     );
     let _ = desk.focus(ONE, &ok(ONE), &[]);
     let effects = reduce(
         &mut desk.state,
         &mut desk.runtime,
-        &Input::ToggleKeyPressed {
-            trace_id: TraceId::from_raw(9),
-            toggle: LockKey::ScrollLock,
-            pressed_at_ms: 1_000,
+        &verbatim_model::Arrival {
+            at_us: 1_000_000,
+            input: Input::ToggleKeyPressed {
+                trace_id: TraceId::from_raw(9),
+                toggle: LockKey::ScrollLock,
+            },
         },
     );
     assert_eq!(effects, []);
@@ -593,13 +645,15 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         reduce(
             &mut desk.state,
             &mut desk.runtime,
-            &Input::Queue {
-                trace_id: toggled,
+            &verbatim_model::Arrival {
                 at_us: 1_030_000,
-                input: QueueInput::LockKeyRead {
-                    key: LockKey::ScrollLock,
-                    on: true
-                }
+                input: Input::Queue {
+                    trace_id: toggled,
+                    input: QueueInput::LockKeyRead {
+                        key: LockKey::ScrollLock,
+                        on: true
+                    }
+                },
             }
         ),
         [said(

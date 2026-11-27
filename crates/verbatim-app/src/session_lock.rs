@@ -178,11 +178,12 @@ fn lock_of(flags: i32) -> SessionLock {
 
 /// Posts `lock` to Core's event queue.
 fn post(commands: &Commands, lock: SessionLock) {
-    let _ = commands.send(ShellCommand::Input(Box::new(Input::Queue {
-        trace_id: TraceId::mint(),
-        at_us: verbatim_process::clock::now_us(),
-        input: QueueInput::Lock(lock),
-    })));
+    let _ = commands.send(ShellCommand::Input(Box::new(crate::arrived(
+        Input::Queue {
+            trace_id: TraceId::mint(),
+            input: QueueInput::Lock(lock),
+        },
+    ))));
 }
 
 /// The window's procedure: a lock or unlock of this session is posted.

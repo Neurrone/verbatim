@@ -197,10 +197,14 @@ mod tests {
         let recorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
             SrState::new(),
         )));
-        recorder
-            .lock()
-            .expect("lock")
-            .record_input(Input::Tick, 0, &SrState::new());
+        recorder.lock().expect("lock").record_input(
+            verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::Tick,
+            },
+            0,
+            &SrState::new(),
+        );
 
         let path = dump_now(&recorder, &dir).expect("dump succeeds");
         assert_only_a_tick_is_dumped(&path, &dir);
@@ -216,7 +220,11 @@ mod tests {
         let mut reader = io::BufReader::new(file);
         let contents = dump::read_dump(&mut reader).expect("dump parses");
         assert!(!contents.truncated);
-        let inputs: Vec<&Input> = contents.inputs.iter().map(|entry| &entry.input).collect();
+        let inputs: Vec<&Input> = contents
+            .inputs
+            .iter()
+            .map(|entry| &entry.arrival.input)
+            .collect();
         assert_eq!(inputs, [&Input::Tick]);
     }
 
@@ -226,10 +234,14 @@ mod tests {
         let recorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
             SrState::new(),
         )));
-        recorder
-            .lock()
-            .expect("lock")
-            .record_input(Input::Tick, 0, &SrState::new());
+        recorder.lock().expect("lock").record_input(
+            verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::Tick,
+            },
+            0,
+            &SrState::new(),
+        );
 
         // Poison the lock the way a panicking reducer thread would.
         let poisoning_recorder = Arc::clone(&recorder);

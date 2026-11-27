@@ -396,30 +396,39 @@ pub enum QueryKind {
     FirstChild,
 }
 
+/// One input to the reducer with when it arrived: the one time Core takes
+/// for everything it does while handling the input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Arrival {
+    /// When the input was made, in microseconds on the run's shared clock:
+    /// stamped where the input is made, by the thread that observed it or
+    /// by the shell for its own inputs.
+    pub at_us: u64,
+    /// The input.
+    pub input: Input,
+}
+
 /// One input to the reducer. Strictly accessibility-shaped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Input {
-    /// A lock key reached the operating system: its new state is announced
-    /// 30 ms after `pressed_at_ms`, once Windows has changed it: the shell
-    /// reads the key's state at the due time Core's state gives, then
-    /// enters [`Input::LockKeyToggled`].
+    /// A lock key reached the operating system, at its [`Arrival`]'s time,
+    /// stamped when the hook saw it: its new state is announced 30 ms
+    /// later, once Windows has changed it: the shell reads the key's state
+    /// at the due time Core's state gives, then enters
+    /// [`Input::LockKeyToggled`].
     ToggleKeyPressed {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
         /// Which key.
         toggle: LockKey,
-        /// Milliseconds on the run's shared clock when the hook saw it.
-        pressed_at_ms: u64,
     },
     /// An input to the event queue (ADR 0003), with the trace it runs
-    /// under and its time on the run's shared clock.
+    /// under; its time is its [`Arrival`]'s.
     Queue {
         /// The trace minted where it was observed, or by the shell for
         /// its own inputs.
         trace_id: TraceId,
-        /// When, in microseconds on the run's shared clock.
-        at_us: u64,
         /// The input.
         input: crate::request::QueueInput,
     },
@@ -443,10 +452,6 @@ pub enum Input {
         /// already reached were reported as
         /// [`QueueInput::MarkReached`](crate::request::QueueInput::MarkReached) first.
         marks: Vec<SpeechMark>,
-        /// When it ended, in milliseconds since the Unix epoch, the clock
-        /// outposts stamp events with; 0 when unknown.
-        #[serde(default)]
-        at_ms: u64,
     },
     /// An utterance the reducer placed index marks in failed in synthesis
     /// or audio output before playback reached all of them. It counts as

@@ -12,14 +12,27 @@ use super::{Reader, RequestWindow};
 
 /// When a reader's worker ran a request, as its answer stamps it
 /// (`verbatim_model::request::Answer`), in microseconds on the run's shared
-/// clock: 0 for both for an ending no worker made, Core's own or a
-/// reader's refusal.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Stamps {
     /// When the worker began it.
     pub(crate) began_us: u64,
     /// When the worker ended it.
     pub(crate) ended_us: u64,
+}
+
+/// Who ran a request that ended: a reader's worker, with when, or no
+/// worker. Parsed once, where the ending is made: the inbox makes a
+/// reader's result `Worker` with the answer's stamps, and every other
+/// ending, Core's own and its plain reader's results among them, is
+/// `NoWorker`, where the answer's stamps of 0 named no run
+/// (`verbatim_model::request::Answer::began_us`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Ran {
+    /// A reader's worker ran it.
+    Worker(Stamps),
+    /// No worker ran it.
+    NoWorker,
 }
 
 /// A request an entry's function can ask, with the type of its result.
@@ -33,14 +46,14 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     fn window(&self) -> RequestWindow;
     /// The request as it is sent.
     fn wire(&self) -> Question;
-    /// A result as it arrived, with when its reader's worker ran it
-    /// (`ran`), decoded against the request sent. The
+    /// A result as it arrived, with who ran it (`ran`), decoded against
+    /// the request sent. The
     /// reply type holds every result a correct reader can answer the
     /// request with, its failures included (a text request's
     /// [`verbatim_model::TextFailure`], a batch's step outcomes), so
     /// `None` is only for a malformed answer: a result of another
     /// request's kind or shape.
-    fn decode(&self, reply: Reply, ran: Stamps) -> Option<Self::Reply>;
+    fn decode(&self, reply: Reply, ran: Ran) -> Option<Self::Reply>;
 
     /// The shell's answer to a read of an application's current focus it
     /// refused because the window was hung, what it read in front,

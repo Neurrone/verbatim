@@ -517,7 +517,7 @@ fn replayed(name: &str) -> Vec<Vec<String>> {
     let file = fs::File::open(fixture_path(name)).expect("fixture file exists");
     let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
     assert!(!contents.truncated, "the committed fixture is complete");
-    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.arrival.clone()).collect();
     let first = replay(&contents.base, &inputs);
     assert_eq!(
         first,

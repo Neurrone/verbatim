@@ -145,7 +145,7 @@ fn by_ids(mut read: FocusRead, event: MsaaIds) -> FocusRead {
 fn answered(desk: &Desk) -> Vec<u64> {
     desk.recorded
         .iter()
-        .filter_map(|recorded| match &recorded.input {
+        .filter_map(|recorded| match &recorded.arrival.input {
             verbatim_model::Input::Queue {
                 input: QueueInput::Answer { answer, .. },
                 ..
@@ -805,7 +805,7 @@ fn replayed(name: &str) -> Vec<Vec<String>> {
     let file = fs::File::open(fixture_path(name)).expect("fixture file exists");
     let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
     assert!(!contents.truncated, "the committed fixture is complete");
-    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.arrival.clone()).collect();
     let first = replay(&contents.base, &inputs);
     assert_eq!(
         first,
@@ -850,7 +850,7 @@ fn the_settings_lists_second_own_focus_says_the_item_once() {
 fn the_recorded_settings_dialog_says_its_item_once() {
     let file = fs::File::open(fixture_path("settings_dialog_keys_run02")).expect("fixture file");
     let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
-    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.arrival.clone()).collect();
     let first = replay(&contents.base, &inputs);
     assert_eq!(
         first,
@@ -913,7 +913,7 @@ fn the_recorded_settings_dialogs_destroys_reach_its_outpost_and_clear_cores_reco
     let mut runtime = verbatim_core::Runtime::default();
     let mut destroyed = Vec::new();
     for recorded in &contents.inputs {
-        let window = match &recorded.input {
+        let window = match &recorded.arrival.input {
             verbatim_model::Input::Queue {
                 input: QueueInput::WindowDestroyed { window, .. },
                 ..
@@ -921,7 +921,7 @@ fn the_recorded_settings_dialogs_destroys_reach_its_outpost_and_clear_cores_reco
             _ => None,
         };
         let before = probed(&state);
-        let effects = verbatim_core::reduce(&mut state, &mut runtime, &recorded.input);
+        let effects = verbatim_core::reduce(&mut state, &mut runtime, &recorded.arrival);
         let Some(window) = window else {
             continue;
         };
@@ -1114,16 +1114,16 @@ fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
     let file = fs::File::open(fixture_path("dialog_shown_import")).expect("fixture file exists");
     let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
     assert!(!contents.truncated, "the committed fixture is complete");
-    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.arrival.clone()).collect();
     let effects = replay(&contents.base, &inputs);
     assert_eq!(effects, replay(&contents.base, &inputs), "deterministic");
     let show = inputs
         .iter()
-        .position(|input| {
+        .position(|arrival| {
             let verbatim_model::Input::Queue {
                 input: QueueInput::Tell { tell, .. },
                 ..
-            } = input
+            } = &arrival.input
             else {
                 return false;
             };
@@ -1158,8 +1158,8 @@ fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
         .expect("the show reads the focus");
     let answered = inputs
         .iter()
-        .position(|input| {
-            matches!(input, verbatim_model::Input::Queue {
+        .position(|arrival| {
+            matches!(&arrival.input, verbatim_model::Input::Queue {
                 input: QueueInput::Answer { answer, .. },
                 ..
             } if answer.number == number)

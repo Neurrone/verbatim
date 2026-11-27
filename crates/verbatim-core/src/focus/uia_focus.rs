@@ -301,7 +301,8 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     };
     super::narrow::judge_ahead(cx, &read);
     let origin = origin(focus, window);
-    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, &read_by);
+    let now = cx.now();
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, (&read_by, now));
     if !executed.committed {
         unexecuted(cx, window);
     }
@@ -352,7 +353,8 @@ async fn afresh(
         return;
     };
     let origin = origin(focus, window);
-    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, &read_by);
+    let now = cx.now();
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, (&read_by, now));
     let fence = crate::entries::front_fence(cx);
     executed.deliver(cx, fence);
 }

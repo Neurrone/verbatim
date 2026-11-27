@@ -696,7 +696,7 @@ fn typing_held_when_the_focus_leaves_is_not_echoed_on_return() {
     term.write("$ ", 100);
     term.typed("l", 200);
     term.reader.blur();
-    term.reader.focus(210);
+    term.reader.focus();
     assert_eq!(term.read(220), quiet(None));
     assert_eq!(
         term.write("l", 250),
@@ -789,7 +789,7 @@ fn with_review_following_off_only_the_user_moves_the_review_cursor() {
 fn the_focus_arriving_moves_the_review_cursor_to_the_caret() {
     let mut term = Term::new(20, 5, 10);
     term.write("a\r\nb\r\nc", 100);
-    term.reader.focus(200);
+    term.reader.focus();
     assert_eq!(term.read(300), quiet(None));
     assert_eq!(term.review(), Some(2));
 }
@@ -912,7 +912,7 @@ fn the_first_key_after_the_focus_returns_waits_the_shortest_quiet_period() {
     term.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
     term.reader.timer(2000);
     term.reader.blur();
-    term.reader.focus(2100);
+    term.reader.focus();
     assert_eq!(term.read(2200), quiet(None));
     term.key(KeyKind::Caret(Unit::Line), 5000);
     assert_eq!(
@@ -1204,7 +1204,7 @@ fn output_written_in_the_background_is_not_heard_on_return() {
     term.write("a\r\n", 100);
     term.reader.blur();
     assert_eq!(term.write("b\r\n", 200), quiet(None));
-    term.reader.focus(300);
+    term.reader.focus();
     assert_eq!(term.write("c\r\n", 400), quiet(None));
     assert_eq!(term.write("d\r\n", 500), says(vec![line(3, "d")]));
 }
@@ -1749,7 +1749,7 @@ fn a_lost_read_taken_as_the_focus_arrives_says_nothing() {
         .collect::<Vec<_>>()
         .concat();
     term.terminal.write(away.as_bytes());
-    let _ = term.reader.focus(5000);
+    let _ = term.reader.focus();
     assert_eq!(term.read(5100), quiet(None));
     assert_eq!(term.read(5200), quiet(None));
 }

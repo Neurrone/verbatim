@@ -48,6 +48,7 @@ use super::versions::ReadBy;
 use crate::entries::Entries;
 use crate::event_queue::{Cx, RequestWindow};
 use crate::keys::entry::Fence;
+use crate::now::Now;
 use crate::state::SrState;
 
 /// The number of the plain object's node within its generation.
@@ -402,11 +403,13 @@ pub(crate) fn decide(
 ) {
     match (front, read.reads_like_nvda(), read.reads_the_desktop()) {
         (Front::Desktop(desktop), _, true) => {
-            let executed = commit_desktop(&mut cx.facts_mut(), desktop, (trace_id, fence));
+            let now = cx.now();
+            let executed = commit_desktop(&mut cx.facts_mut(), desktop, (trace_id, fence, now));
             executed.deliver(cx, fence);
         }
         (Front::Ghost(ghost), true, _) => {
-            let executed = commit_ghost(&mut cx.facts_mut(), ghost, (trace_id, fence));
+            let now = cx.now();
+            let executed = commit_ghost(&mut cx.facts_mut(), ghost, (trace_id, fence, now));
             cx.watch_if_attended(&stood_for(ghost, window));
             executed.deliver(cx, fence);
         }
@@ -444,7 +447,7 @@ fn stood_for(ghost: &GhostFront, asked: RequestWindow) -> RequestWindow {
 fn commit_ghost(
     state: &mut SrState,
     ghost: &GhostFront,
-    trace: (verbatim_model::TraceId, Fence),
+    trace: (verbatim_model::TraceId, Fence, Now),
 ) -> Executed {
     let kind = PlainKind::Ghost {
         stands_for: ghost.stands_for,
@@ -463,7 +466,7 @@ fn commit_ghost(
 fn commit_desktop(
     state: &mut SrState,
     desktop: &DesktopFront,
-    trace: (verbatim_model::TraceId, Fence),
+    trace: (verbatim_model::TraceId, Fence, Now),
 ) -> Executed {
     let object = state
         .plain
@@ -483,7 +486,7 @@ fn commit_desktop(
 fn commit(
     state: &mut SrState,
     object: &PlainObject,
-    (trace_id, fence): (verbatim_model::TraceId, Fence),
+    (trace_id, fence, now): (verbatim_model::TraceId, Fence, Now),
 ) -> Executed {
     let focus = FocusNode {
         read: NodeRead {
@@ -529,7 +532,13 @@ fn commit(
         alt_held: false,
         foreground_is_shell: false,
     });
-    execute(state, &origin, &read, &Known::default(), &ReadBy::Plain)
+    execute(
+        state,
+        &origin,
+        &read,
+        &Known::default(),
+        (&ReadBy::Plain, now),
+    )
 }
 
 #[cfg(test)]

@@ -957,9 +957,6 @@ pub enum QueueInput {
         /// already reached were reported as [`QueueInput::MarkReached`]
         /// first.
         marks: Vec<crate::SpeechMark>,
-        /// When it ended, in milliseconds since the Unix epoch; 0 when
-        /// unknown.
-        at_ms: u64,
     },
     /// An utterance Core placed index marks in failed in synthesis or
     /// audio output before playback reached all of them; handled at once

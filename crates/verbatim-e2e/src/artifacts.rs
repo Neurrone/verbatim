@@ -373,8 +373,8 @@ pub const FLIGHT_RECORDER_FILE: &str = "flight-recorder.jsonl";
 type Found = (Option<u64>, usize, usize, String);
 
 /// The inputs of the flight-recorder dump `text` that carry `trace` or
-/// that Core received in `window_us`, each replayed and rendered on one
-/// line with its marks, `failing trace` and `untimed`, as
+/// that arrived in `window_us`, each replayed and rendered on one line,
+/// marked `failing trace` for one carrying it, as
 /// `verbatim_replay::failure_inputs` gives them
 /// (`books/dev/src/reference/crates/verbatim-replay.md`), prefixed with the file's name. A
 /// dump that cannot be read is one line saying why.
@@ -398,7 +398,7 @@ fn recorder_lines(text: &str, trace: Option<TraceId>, window_us: Option<(u64, u6
         .into_iter()
         .map(|shown| {
             (
-                shown.time_us,
+                Some(shown.time_us),
                 0,
                 shown.line,
                 format!("{FLIGHT_RECORDER_FILE}: {}", shown.text),
@@ -581,16 +581,16 @@ mod tests {
     /// 2026-10-09T10:00:00Z, in milliseconds since the Unix epoch.
     const TEN_O_CLOCK_MS: u64 = 1_791_540_000_000;
 
-    /// A dump of `inputs`, each with the effect count reducing it gives,
+    /// A dump of `arrivals`, each with the effect count reducing it gives,
     /// from a new state.
-    fn dump_of(inputs: Vec<verbatim_model::Input>) -> String {
+    fn dump_of(arrivals: Vec<verbatim_model::Arrival>) -> String {
         let mut state = verbatim_core::SrState::new();
         let mut runtime = verbatim_core::Runtime::default();
-        let recorded: Vec<verbatim_core::RecordedInput> = inputs
+        let recorded: Vec<verbatim_core::RecordedInput> = arrivals
             .into_iter()
-            .map(|input| verbatim_core::RecordedInput {
-                effect_count: verbatim_core::reduce(&mut state, &mut runtime, &input).len(),
-                input,
+            .map(|arrival| verbatim_core::RecordedInput {
+                effect_count: verbatim_core::reduce(&mut state, &mut runtime, &arrival).len(),
+                arrival,
             })
             .collect();
         let mut out = Vec::new();
@@ -609,19 +609,21 @@ mod tests {
 
     /// A key typing `text` at `at_ms`, as the hook reports it to the
     /// event queue.
-    fn typed(trace: TraceId, text: &str, at_ms: u64) -> verbatim_model::Input {
-        verbatim_model::Input::Queue {
-            trace_id: trace,
+    fn typed(trace: TraceId, text: &str, at_ms: u64) -> verbatim_model::Arrival {
+        verbatim_model::Arrival {
             at_us: at_ms * 1_000,
-            input: verbatim_model::request::QueueInput::Press(Box::new(
-                verbatim_model::request::Press {
-                    key_seq: verbatim_model::KeySeq::new(1),
-                    pressed_at_us: at_ms * 1_000,
-                    action: verbatim_model::request::PressAction::Typed {
-                        text: text.to_owned(),
+            input: verbatim_model::Input::Queue {
+                trace_id: trace,
+                input: verbatim_model::request::QueueInput::Press(Box::new(
+                    verbatim_model::request::Press {
+                        key_seq: verbatim_model::KeySeq::new(1),
+                        pressed_at_us: at_ms * 1_000,
+                        action: verbatim_model::request::PressAction::Typed {
+                            text: text.to_owned(),
+                        },
                     },
-                },
-            )),
+                )),
+            },
         }
     }
 
@@ -671,8 +673,10 @@ mod tests {
                 typed(other, "a", TEN_O_CLOCK_MS - 5_000),
                 typed(trace, "b", TEN_O_CLOCK_MS - 4_000),
                 typed(other, "c", TEN_O_CLOCK_MS - 2_000),
-                // No time of its own: it takes the input's before it.
-                verbatim_model::Input::Tick,
+                verbatim_model::Arrival {
+                    at_us: (TEN_O_CLOCK_MS - 1_000) * 1_000,
+                    input: verbatim_model::Input::Tick,
+                },
                 typed(other, "d", TEN_O_CLOCK_MS + 1_000),
             ]),
         )
@@ -687,7 +691,7 @@ mod tests {
         let typed_at = |line: usize, trace: TraceId, text: &str, at_ms: u64| {
             let at_us = at_ms * 1_000;
             format!(
-                "{line}: Queue trace {trace}, at_us {at_us}, input Press pressed_at_us {at_us}, action Typed text \"{text}\", key_seq 1. 1 effect: Queue"
+                "{line}: at_us {at_us}, Queue trace {trace}, input Press pressed_at_us {at_us}, action Typed text \"{text}\", key_seq 1. 1 effect: Queue"
             )
         };
         assert_eq!(
@@ -704,9 +708,12 @@ mod tests {
                     "flight-recorder.jsonl: {}",
                     typed_at(5, other, "c", TEN_O_CLOCK_MS - 2_000)
                 ),
-                "flight-recorder.jsonl: (untimed) 6: Tick. 0 effects".to_owned(),
                 format!(
                     "outpost-conhost-7.log: 2026-10-09T09:59:58.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"
+                ),
+                format!(
+                    "flight-recorder.jsonl: 6: at_us {}, Tick. 0 effects",
+                    (TEN_O_CLOCK_MS - 1_000) * 1_000
                 ),
             ]
         );

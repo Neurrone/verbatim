@@ -659,8 +659,8 @@ run's collected logs, with the flight recorder's inputs that carry it or
 that Core received in a window, from the `RECORDER_WINDOW_US` (3
 seconds) before the failing step began to the failure, replayed and
 rendered with `verbatim-replay` (`failure_inputs`) as `cargo xtask
-replay` prints them, those of the trace marked `(failing trace)` and
-those with no time of their own `(untimed)`, all in time order. xtask's
+replay` prints them, those of the trace marked `(failing trace)`, all
+in the order they arrived. xtask's
 commands that run a scenario as a subprocess call the same functions to
 find what it left. The files a run keeps are listed in
 the tooling guide's "What a run leaves behind"; losing any of them fails

@@ -25,7 +25,7 @@ use verbatim_model::{
 
 use crate::batch::Answers;
 use crate::entries::Entries;
-use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow, Stamps};
+use crate::event_queue::{Cx, Outcome, Ran, Reader, Request, RequestWindow};
 use crate::state::SrState;
 use crate::terminal::reader::{self, HistoryAsk, SearchAsk};
 use crate::terminal::reading;
@@ -57,7 +57,7 @@ impl Request for HistoryRead {
         reader::history_batch(self.node, &self.ask).0.question()
     }
 
-    fn decode(&self, reply: Reply, _: Stamps) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply, _: Ran) -> Option<Self::Reply> {
         let (sent, steps) = reader::history_batch(self.node, &self.ask);
         let answers = Answers::parse(&sent, reply)?;
         Some(reader::history_of(&answers, &steps))
@@ -88,7 +88,7 @@ impl Request for Search {
         reader::search_batch(self.node, &self.ask).0.question()
     }
 
-    fn decode(&self, reply: Reply, _: Stamps) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply, _: Ran) -> Option<Self::Reply> {
         let (sent, steps) = reader::search_batch(self.node, &self.ask);
         let answers = Answers::parse(&sent, reply)?;
         Some(reader::search_of(&answers, &steps))
@@ -122,8 +122,8 @@ pub(crate) async fn fresh(
     node: NodeId,
     due_us: u64,
 ) -> bool {
-    let now_us = cx.now_us();
-    let Some(asked) = reading::entry_read(&mut cx.facts_mut(), node, false, now_us) else {
+    let now = cx.now();
+    let Some(asked) = reading::entry_read(&mut cx.facts_mut(), node, false, now) else {
         return false;
     };
     let reply = match cx.ask(asked, due_us).await {
@@ -143,12 +143,12 @@ pub(crate) async fn fresh(
     if let Some(reply) = reply.as_deref() {
         cx.emit(reading::observed(&asked.terminal, reply, trace_id));
     }
-    let now_us = cx.now_us();
+    let now = cx.now();
     let entry = reading::entry_read_ended(
         &mut cx.facts_mut(),
         &asked,
         reply.as_deref(),
-        (now_us, trace_id),
+        (now, trace_id),
     );
     reading::speak_read(cx, entry);
     blank
@@ -419,15 +419,12 @@ mod tests {
                 StepOutcome::Skipped,
             ];
             assert_eq!(
-                search.decode(Reply::Steps(steps), Stamps::default()),
+                search.decode(Reply::Steps(steps), Ran::NoWorker),
                 Some(Err(failure)),
                 "{failure:?}"
             );
         }
-        assert_eq!(
-            search.decode(Reply::Steps(Vec::new()), Stamps::default()),
-            None
-        );
+        assert_eq!(search.decode(Reply::Steps(Vec::new()), Ran::NoWorker), None);
         // A step answered with another kind's result is malformed.
         let other = vec![
             StepOutcome::Done(Done::FindText(Vec::new())),
@@ -435,7 +432,7 @@ mod tests {
             StepOutcome::Skipped,
             StepOutcome::Skipped,
         ];
-        assert_eq!(search.decode(Reply::Steps(other), Stamps::default()), None);
+        assert_eq!(search.decode(Reply::Steps(other), Ran::NoWorker), None);
         // A history read's one step, the whole text's, ended each way a
         // step can end without a result.
         let history = HistoryRead {
@@ -455,13 +452,13 @@ mod tests {
             (StepOutcome::Failed, TextFailure::Unanswered),
         ] {
             assert_eq!(
-                history.decode(Reply::Steps(vec![outcome]), Stamps::default()),
+                history.decode(Reply::Steps(vec![outcome]), Ran::NoWorker),
                 Some(Err(failure)),
                 "{failure:?}"
             );
         }
         assert_eq!(
-            history.decode(Reply::Steps(Vec::new()), Stamps::default()),
+            history.decode(Reply::Steps(Vec::new()), Ran::NoWorker),
             None
         );
     }

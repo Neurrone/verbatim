@@ -37,10 +37,12 @@ fn shell_feeds(held: &mut Held, at_us: u64, input: QueueInput) -> Vec<Said> {
     let mut effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
-        &verbatim_model::Input::Queue {
-            trace_id: TraceId::from_raw(5),
+        &verbatim_model::Arrival {
             at_us,
-            input,
+            input: verbatim_model::Input::Queue {
+                trace_id: TraceId::from_raw(5),
+                input,
+            },
         },
     );
     effects.retain(|effect| !matches!(effect, Said::Queue(QueueEffect::WakeAt(_))));
@@ -131,7 +133,7 @@ fn terminal_followed() -> Held {
             console: false,
         }),
         Vec::new(),
-        (500, false),
+        (crate::now::Now::from_raw(500), false),
     );
     let _ = state.state.wants.take_for_tests();
     state

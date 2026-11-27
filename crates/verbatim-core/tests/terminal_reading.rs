@@ -400,10 +400,13 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
     // is spoken, and the "x", shown by a later read, is output, heard with
     // the typing echo off (a limit of the terminal design).
     let mut session = showing(20, 3, 10, "$ ");
-    session.input(&Input::Settings(ReaderSettings {
-        speak_typed_characters: TypingEcho::Off,
-        ..ReaderSettings::default()
-    }));
+    session.input(&verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::Settings(ReaderSettings {
+            speak_typed_characters: TypingEcho::Off,
+            ..ReaderSettings::default()
+        }),
+    });
     let held = caret(
         TraceId::from_raw(4),
         CaretKey {
@@ -438,10 +441,13 @@ fn with_passwords_spoken_a_character_is_heard_as_typed_and_its_asterisk_as_shown
     // as it is typed, and the asterisk the prompt shows for it is output
     // in the key's window.
     let mut session = showing(30, 4, 10, "Password: ");
-    session.input(&Input::Settings(ReaderSettings {
-        speak_terminal_passwords: true,
-        ..ReaderSettings::default()
-    }));
+    session.input(&verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::Settings(ReaderSettings {
+            speak_terminal_passwords: true,
+            ..ReaderSettings::default()
+        }),
+    });
     let (key, input) = typed("s", 1000);
     session.press(&input);
     // Echoed by the key's own entry, whose speech carries its number.
@@ -590,10 +596,12 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
         action: PressAction::Clearing,
     });
     session.timers.clear();
-    session.input(&Input::Queue {
-        trace_id: TraceId::from_raw(7),
+    session.input(&verbatim_model::Arrival {
         at_us: 0,
-        input: verbatim_model::request::QueueInput::TerminalDue { at_ms: 2000 },
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(7),
+            input: verbatim_model::request::QueueInput::TerminalDue { at_ms: 2000 },
+        },
     });
     assert_eq!(session.heard(), []);
     assert_eq!(session.timers, [Some(3250)]);
@@ -850,19 +858,21 @@ fn outside_a_terminal_no_status_line_is_found() {
     let effects = verbatim_core::reduce(
         &mut state,
         &mut verbatim_core::Runtime::default(),
-        &Input::Queue {
-            trace_id: TraceId::from_raw(1),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::Press(Box::new(
-                verbatim_model::request::Press {
-                    key_seq: verbatim_model::KeySeq::new(1),
-                    pressed_at_us: 0,
-                    action: verbatim_model::request::PressAction::Command {
-                        command: STATUS_BAR,
-                        repeat: 0,
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(1),
+                input: verbatim_model::request::QueueInput::Press(Box::new(
+                    verbatim_model::request::Press {
+                        key_seq: verbatim_model::KeySeq::new(1),
+                        pressed_at_us: 0,
+                        action: verbatim_model::request::PressAction::Command {
+                            command: STATUS_BAR,
+                            repeat: 0,
+                        },
                     },
-                },
-            )),
+                )),
+            },
         },
     );
     let spoken: Vec<Vec<SegmentContent>> = effects
@@ -1394,12 +1404,13 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
     session.write("l", 1050);
     session.press(&command(ReviewCommand::ReviewPreviousLine));
     session.write("s\r\nfour\r\n", 3000);
-    let (inputs, effects): (Vec<Input>, Vec<Vec<Effect>>) = session.log.drain(..).unzip();
+    let (inputs, effects): (Vec<verbatim_model::Arrival>, Vec<Vec<Effect>>) =
+        session.log.drain(..).unzip();
     let recorded: Vec<RecordedInput> = inputs
         .iter()
         .zip(&effects)
-        .map(|(input, effects)| RecordedInput {
-            input: input.clone(),
+        .map(|(arrival, effects)| RecordedInput {
+            arrival: arrival.clone(),
             effect_count: effects.len(),
         })
         .collect();
@@ -1416,10 +1427,10 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
     .expect("a dump is written");
     let contents = dump::read_dump(&mut BufReader::new(file.as_slice())).expect("a dump is read");
     assert_eq!(contents.base, base);
-    let inputs: Vec<Input> = contents
+    let inputs: Vec<verbatim_model::Arrival> = contents
         .inputs
         .into_iter()
-        .map(|recorded| recorded.input)
+        .map(|recorded| recorded.arrival)
         .collect();
     assert_eq!(replay(&contents.base, &inputs), effects);
 }

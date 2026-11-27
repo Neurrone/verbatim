@@ -174,7 +174,7 @@ fn a_hung_window_plays_the_sound_and_says_nothing() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 2_000,
+            now: crate::now::Now::from_raw(2_000),
             input: Input::RefusedHung(verbatim_model::request::RequestNumber(3)),
         },
     )
@@ -214,7 +214,7 @@ fn its_speech_carries_its_own_key_number_not_a_later_keys() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 2_000,
+            now: crate::now::Now::from_raw(2_000),
             input: field(TextSummary::Line("a".to_owned())),
         },
     )
@@ -239,17 +239,19 @@ fn the_reducer_routes_a_press_into_the_queue_and_keeps_its_fence() {
     let effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
-        &verbatim_model::Input::Queue {
-            trace_id: TraceId::from_raw(9),
+        &verbatim_model::Arrival {
             at_us: 1_000,
-            input: QueueInput::Press(Box::new(Press {
-                key_seq: KeySeq::new(9),
-                pressed_at_us: 900,
-                action: PressAction::Command {
-                    command: ReviewCommand::ReportFocus,
-                    repeat: 0,
-                },
-            })),
+            input: verbatim_model::Input::Queue {
+                trace_id: TraceId::from_raw(9),
+                input: QueueInput::Press(Box::new(Press {
+                    key_seq: KeySeq::new(9),
+                    pressed_at_us: 900,
+                    action: PressAction::Command {
+                        command: ReviewCommand::ReportFocus,
+                        repeat: 0,
+                    },
+                })),
+            },
         },
     );
     let [
@@ -373,4 +375,30 @@ fn it_leaves_the_navigator_where_it_is() {
         ["Label(\"OK\") Role(Button)"]
     );
     assert_eq!(state.navigator_object().unwrap().id, node(7));
+}
+
+/// A dump taken while report focus waits for its read: the function
+/// rebuilt from the dump's checkpoint takes the time the read was sent,
+/// which the answer then stamps as the focus's value time, as the
+/// straight run does.
+#[test]
+fn a_dump_with_report_focus_waiting_rebuilds_with_the_time_its_read_was_sent() {
+    let mut state = committed();
+    let _ = feed_at(&mut state, 1_000, press(1, 0));
+    let json = serde_json::to_string(&state.state).unwrap();
+    let mut restored = Held {
+        state: serde_json::from_str(&json).unwrap(),
+        runtime: crate::Runtime::default(),
+    };
+    let answer = field(TextSummary::Line("one two\n".to_owned()));
+    let straight = feed_at(&mut state, 2_000, answer.clone());
+    assert_eq!(feed_at(&mut restored, 2_000, answer), straight);
+    let read_us = |held: &Held| {
+        held.state
+            .versions
+            .focus()
+            .and_then(|focus| focus.context.value_read_us)
+    };
+    assert_eq!(read_us(&restored), Some(1_000));
+    assert_eq!(read_us(&state), Some(1_000));
 }

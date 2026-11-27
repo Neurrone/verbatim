@@ -640,14 +640,16 @@ impl Desk {
 
     /// Feeds `input` at the queue's time, its effects as they came.
     pub fn feed(&mut self, input: QueueInput) -> Vec<Effect> {
-        let input = Input::Queue {
-            trace_id: TraceId::from_raw(9),
+        let arrival = verbatim_model::Arrival {
             at_us: self.at_us,
-            input,
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(9),
+                input,
+            },
         };
-        let effects = reduce(&mut self.state, &mut self.runtime, &input);
+        let effects = reduce(&mut self.state, &mut self.runtime, &arrival);
         self.recorded.push(verbatim_core::RecordedInput {
-            input,
+            arrival,
             effect_count: effects.len(),
         });
         effects

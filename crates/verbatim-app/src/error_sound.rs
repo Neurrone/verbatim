@@ -37,7 +37,9 @@ impl<S: Subscriber> Layer<S> for ErrorSoundLayer {
         {
             // A post never waits; a refused one means
             // Verbatim is exiting, and the sound no longer matters.
-            let _ = commands.send(ShellCommand::Input(Box::new(Input::ErrorLogged)));
+            let _ = commands.send(ShellCommand::Input(Box::new(crate::arrived(
+                Input::ErrorLogged,
+            ))));
         }
     }
 }

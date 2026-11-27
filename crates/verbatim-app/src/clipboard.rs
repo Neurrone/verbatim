@@ -87,7 +87,10 @@ fn copy(commands: &Commands, trace_id: TraceId, text: String) {
         text,
         copied: copied.is_ok(),
     };
-    if commands.send(ShellCommand::Input(Box::new(input))).is_err() {
+    if commands
+        .send(ShellCommand::Input(Box::new(crate::arrived(input))))
+        .is_err()
+    {
         tracing::debug!("the reducer thread is gone; a copy is not confirmed");
     }
 }

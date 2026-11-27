@@ -23,6 +23,7 @@ use crate::event_queue::Cx;
 use crate::event_queue::RequestWindow;
 use crate::foreground::ForegroundFact;
 use crate::keys::entry::Fence;
+use crate::now::Now;
 use crate::state::SrState;
 
 /// A focus as Core executes it: the parts of a focus the focus handling
@@ -31,8 +32,6 @@ use crate::state::SrState;
 pub(crate) struct Report {
     pub(crate) trace_id: TraceId,
     pub(crate) source: Pid,
-    /// When its reader observed it, in microseconds; 0 when not known.
-    pub(crate) observed_at_us: u64,
     pub(crate) window: Option<WindowFacts>,
     pub(crate) node: NodeSnapshot,
     pub(crate) whole_window: bool,
@@ -161,8 +160,6 @@ pub(crate) struct Origin {
     pub(crate) trace_id: TraceId,
     /// The application.
     pub(crate) source: Pid,
-    /// When the reader heard the event; 0 for a read Core made itself.
-    pub(crate) observed_at_us: u64,
     /// The window facts the tell carried, `None` for a read Core made
     /// itself.
     pub(crate) window: Option<WindowFacts>,
@@ -194,7 +191,6 @@ impl Origin {
         Self {
             trace_id: tell.trace_id,
             source: tell.process,
-            observed_at_us: tell.at_us,
             window: facts.map(|facts| window_of(tell, facts)),
             whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
             top_process: facts.map_or(Some(asked.process), |facts| facts.root.process),
@@ -218,7 +214,6 @@ impl Origin {
         Self {
             trace_id,
             source: asked.process,
-            observed_at_us: 0,
             window: None,
             whole_window: false,
             top_process: Some(asked.process),
@@ -346,7 +341,6 @@ fn ready(
     let report = Report {
         trace_id: origin.trace_id,
         source: origin.source,
-        observed_at_us: origin.observed_at_us,
         window: origin.window.clone(),
         whole_window: origin.whole_window,
         node,
@@ -414,12 +408,14 @@ fn ignored(state: &SrState, origin: &Origin) -> bool {
 /// 427; Dickson, 2026-11-17;
 /// `books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"). A focus whose nodes the reader did not mint, or whose
 /// meeting point is not one Core sent, ends unspoken: a reader's fault.
+/// A terminal it commits is read at `now`, the time of the input whose
+/// step executes it.
 pub(crate) fn execute(
     state: &mut SrState,
     origin: &Origin,
     read: &FocusRead,
     known: &Known,
-    read_by: &HeldBy,
+    (read_by, now): (&HeldBy, Now),
 ) -> Executed {
     if ignored(state, origin) {
         return Executed::default();
@@ -472,7 +468,7 @@ pub(crate) fn execute(
         state,
         terminal,
         follows,
-        (origin.observed_at_us, cut),
+        (now, cut),
     ));
     Executed {
         said,
@@ -574,7 +570,6 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let report = Report {
         trace_id,
         source: focus.context.source,
-        observed_at_us: 0,
         window: focus.context.window.clone(),
         whole_window: false,
         node: focus.context.snapshot.clone(),
@@ -597,7 +592,7 @@ pub(crate) fn retake(
     state: &mut SrState,
     origin: &Origin,
     read: &FocusRead,
-    read_by: &HeldBy,
+    (read_by, now): (&HeldBy, Now),
 ) -> Executed {
     if ignored(state, origin) {
         return Executed::default();
@@ -610,7 +605,7 @@ pub(crate) fn retake(
         state.versions.last.is_some()
             && crate::reduce::same_reading(focus, &ready.report.node, &ready.report.ancestors)
     }) else {
-        return execute(state, origin, read, &known, read_by);
+        return execute(state, origin, read, &known, (read_by, now));
     };
     // The text-changed flag is the focus's and survives its reader's
     // replacement, so it is taken from the old record before the new one
@@ -629,7 +624,7 @@ pub(crate) fn retake(
         state,
         terminal,
         follows,
-        (origin.observed_at_us, false),
+        (now, false),
     ));
     Executed {
         said,

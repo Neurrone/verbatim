@@ -9,6 +9,7 @@ use verbatim_model::request::PressAction;
 use verbatim_model::{KeySeq, TraceId};
 
 use crate::keys::entry::PressEntry;
+use crate::now::Now;
 use crate::state::SrState;
 use crate::terminal::TerminalKeyKind;
 
@@ -41,11 +42,11 @@ fn kinds_at_arrival(state: &SrState, press: &PressEntry) -> Vec<TerminalKeyKind>
     }
 }
 
-/// `press` reached Core's inbox: a key the focused terminal's model takes
-/// at its arrival is taken, with the time it reached the program; one
-/// pressed while a held key's stroke holds the line reaches the program
-/// at that key's pass, and is taken then ([`passed`]).
-pub(crate) fn arrived(state: &mut SrState, press: &PressEntry) {
+/// `press` reached Core's inbox at `now`: a key the focused terminal's
+/// model takes at its arrival is taken, with the time it reached the
+/// program; one pressed while a held key's stroke holds the line reaches
+/// the program at that key's pass, and is taken then ([`passed`]).
+pub(crate) fn arrived(state: &mut SrState, press: &PressEntry, now: Now) {
     let at_ms = press.press.pressed_at_us / 1_000;
     let deferred = state.strokes.holds();
     let named = (press.trace_id, press.press.key_seq);
@@ -53,38 +54,47 @@ pub(crate) fn arrived(state: &mut SrState, press: &PressEntry) {
         if deferred {
             state.terminal_focus.deferred.push((kind, at_ms, named));
         } else {
-            taken(state, kind, at_ms, named);
+            taken(state, kind, at_ms, named, now);
         }
     }
 }
 
 /// A held caret key of `kind` passed to the focused terminal at
-/// `passed_at_us`, named by its trace and number: the model takes it, and
-/// then the keys deferred behind it, which reached the program with it.
+/// `passed_at_us`, named by its trace and number, in the step of the input
+/// at `now`: the model takes it, and then the keys deferred behind it,
+/// which reached the program with it.
 pub(crate) fn passed(
     state: &mut SrState,
     kind: TerminalKeyKind,
-    passed_at_us: u64,
+    (passed_at_us, now): (u64, Now),
     named: (TraceId, KeySeq),
 ) {
     let at_ms = passed_at_us.div_ceil(1_000);
-    taken(state, kind, at_ms, named);
-    released(state, at_ms);
+    taken(state, kind, at_ms, named, now);
+    released(state, at_ms, now);
 }
 
-/// The line no longer holds at `at_ms`: the keys deferred behind a held
-/// stroke reached the program, no earlier than they were pressed.
-pub(crate) fn released(state: &mut SrState, at_ms: u64) {
+/// The line no longer holds at `at_ms`, in the step of the input at
+/// `now`: the keys deferred behind a held stroke reached the program, no
+/// earlier than they were pressed.
+pub(crate) fn released(state: &mut SrState, at_ms: u64, now: Now) {
     if state.strokes.holds() {
         return;
     }
     for (kind, pressed_ms, named) in std::mem::take(&mut state.terminal_focus.deferred) {
-        taken(state, kind, pressed_ms.max(at_ms), named);
+        taken(state, kind, pressed_ms.max(at_ms), named, now);
     }
 }
 
-fn taken(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64, named: (TraceId, KeySeq)) {
+/// The focused terminal's model takes a key of `kind` that reached the
+/// program at `at_ms`, and its reading the key, at `now`.
+fn taken(
+    state: &mut SrState,
+    kind: TerminalKeyKind,
+    at_ms: u64,
+    named: (TraceId, KeySeq),
+    now: Now,
+) {
     crate::terminal_model::key(state, kind, at_ms, named);
-    let now_us = state.terminal_focus.now_us;
-    crate::terminal::reading::key_taken(state, now_us);
+    crate::terminal::reading::key_taken(state, now);
 }

@@ -84,7 +84,7 @@ fn the_first_foreground_report_reads_the_focus_and_speaks_it_as_a_switch() {
 #[test]
 fn a_foreground_whose_process_cannot_be_read_starts_no_outpost_and_asks_nothing() {
     let mut state = Held::default();
-    state.state.queue.start_for_tests(LISTENER);
+    state.state.queue.start_for_tests(LISTENER, 0);
     assert_eq!(
         feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
         NOTHING
@@ -97,7 +97,7 @@ fn a_foreground_whose_process_cannot_be_read_starts_no_outpost_and_asks_nothing(
         &mut state.state,
         &mut state.runtime,
         crate::event_queue::Timed {
-            at_us: 500,
+            now: crate::now::Now::from_raw(500),
             input: Input::Foreground(unread),
         },
     )
@@ -441,7 +441,7 @@ fn the_silent_retake_tells_speech_the_focus_s_new_node() {
         &mut state.state,
         &mut state.runtime,
         crate::event_queue::Timed {
-            at_us: 1_200,
+            now: crate::now::Now::from_raw(1_200),
             input,
         },
     )

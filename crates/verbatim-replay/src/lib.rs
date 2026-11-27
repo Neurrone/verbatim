@@ -11,7 +11,9 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 use verbatim_core::{DumpContents, replay};
-use verbatim_model::{Effect, Input, SpeechPriority, Theme, ThemeOptions, TraceId, UtteranceId};
+use verbatim_model::{
+    Arrival, Effect, Input, SpeechPriority, Theme, ThemeOptions, TraceId, UtteranceId,
+};
 use verbatim_speech::{ActiveTheme, ThemeHandle, ThemePresenter};
 
 /// The file line a dump's first input is on: the header is line 1 and the
@@ -26,8 +28,8 @@ const KEPT_CHARACTERS: usize = 80;
 pub struct Replayed {
     /// The input's line in the dump file, counted from 1.
     pub line: usize,
-    /// The input.
-    pub input: Input,
+    /// The input, with when it arrived.
+    pub arrival: Arrival,
     /// How many effects the live session recorded for it.
     pub recorded: usize,
     /// The effects replaying it produced.
@@ -47,12 +49,12 @@ impl Replayed {
 /// Replays every input of `contents` from its base state, in order.
 #[must_use]
 pub fn replay_dump(contents: &DumpContents) -> Vec<Replayed> {
-    let inputs: Vec<Input> = contents
+    let arrivals: Vec<Arrival> = contents
         .inputs
         .iter()
-        .map(|recorded| recorded.input.clone())
+        .map(|recorded| recorded.arrival.clone())
         .collect();
-    let effects = replay(&contents.base, &inputs);
+    let effects = replay(&contents.base, &arrivals);
     contents
         .inputs
         .iter()
@@ -60,40 +62,11 @@ pub fn replay_dump(contents: &DumpContents) -> Vec<Replayed> {
         .enumerate()
         .map(|(index, (recorded, effects))| Replayed {
             line: FIRST_INPUT_LINE + index,
-            input: recorded.input.clone(),
+            arrival: recorded.arrival.clone(),
             recorded: recorded.effect_count,
             effects,
         })
         .collect()
-}
-
-/// When `input` happened, in microseconds on the run's clock, from the
-/// time it carries (`observed_at_us`, `ended_at_us`, `pressed_at_ms` or
-/// `at_ms`); `None` for an input that carries none, such as an outpost's
-/// answer, or whose time is 0, which no stamp taken on the run's clock
-/// reads.
-#[must_use]
-pub fn input_time_us(input: &Input) -> Option<u64> {
-    let value = serde_json::to_value(input).ok()?;
-    let Value::Object(variant) = value else {
-        return None;
-    };
-    let (_, Value::Object(fields)) = variant.into_iter().next()? else {
-        return None;
-    };
-    fields
-        .iter()
-        .find_map(|(key, value)| {
-            let number = value.as_u64()?;
-            if key.ends_with("_us") {
-                Some(number)
-            } else if key.ends_with("_ms") {
-                number.checked_mul(1_000)
-            } else {
-                None
-            }
-        })
-        .filter(|&time| time != 0)
 }
 
 /// Whether `input` carries `trace` in a `trace_id` or `trace` field,
@@ -119,25 +92,18 @@ pub fn carries_trace(input: &Input, trace: TraceId) -> bool {
 /// One input a failure's report shows ([`failure_inputs`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
-    /// The time it is ordered by, in microseconds on the run's clock: its
-    /// own, or for an untimed input the time of the nearest timed input
-    /// before it, or else after it; `None` when no input in the dump is
-    /// timed.
-    pub time_us: Option<u64>,
+    /// When it arrived, in microseconds on the run's clock.
+    pub time_us: u64,
     /// Its line in the dump file.
     pub line: usize,
-    /// Its rendered line ([`Renderer::line`]), after its marks in
-    /// parentheses: `failing trace` for one carrying the failing step's
-    /// trace, `untimed` for one with no time of its own.
+    /// Its rendered line ([`Renderer::line`]), after `(failing trace)` for
+    /// one carrying the failing step's trace.
     pub text: String,
 }
 
 /// The inputs of `replayed`, a whole dump's replay in order, that a
-/// failure's report shows: each carrying `trace`, and each received from
-/// `from_us` to `to_us` on the run's shared clock. An untimed input
-/// ([`input_time_us`]) is judged by the time [`Shown::time_us`] gives it,
-/// and is shown when no input of the dump is timed, since then nothing
-/// places it outside the window.
+/// failure's report shows: each carrying `trace`, and each that arrived
+/// from `from_us` to `to_us` on the run's shared clock.
 #[must_use]
 pub fn failure_inputs(
     replayed: &[Replayed],
@@ -146,41 +112,19 @@ pub fn failure_inputs(
     from_us: u64,
     to_us: u64,
 ) -> Vec<Shown> {
-    let own: Vec<Option<u64>> = replayed
-        .iter()
-        .map(|replayed| input_time_us(&replayed.input))
-        .collect();
-    let mut placed = own.clone();
-    let mut before = None;
-    for time in &mut placed {
-        *time = time.or(before);
-        before = *time;
-    }
-    let mut after = None;
-    for (time, own) in placed.iter_mut().zip(&own).rev() {
-        after = own.or(after);
-        *time = time.or(after);
-    }
     replayed
         .iter()
-        .zip(own.iter().zip(placed))
-        .filter_map(|(replayed, (own, time))| {
-            let carries = trace.is_some_and(|trace| carries_trace(&replayed.input, trace));
-            let within = time.is_none_or(|time| (from_us..=to_us).contains(&time));
-            let marks: Vec<&str> = [
-                carries.then_some("failing trace"),
-                own.is_none().then_some("untimed"),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+        .filter_map(|replayed| {
+            let time_us = replayed.arrival.at_us;
+            let carries = trace.is_some_and(|trace| carries_trace(&replayed.arrival.input, trace));
+            let within = (from_us..=to_us).contains(&time_us);
             (carries || within).then(|| Shown {
-                time_us: time,
+                time_us,
                 line: replayed.line,
-                text: if marks.is_empty() {
-                    renderer.line(replayed)
+                text: if carries {
+                    format!("(failing trace) {}", renderer.line(replayed))
                 } else {
-                    format!("({}) {}", marks.join(", "), renderer.line(replayed))
+                    renderer.line(replayed)
                 },
             })
         })
@@ -210,15 +154,17 @@ impl Renderer {
         }
     }
 
-    /// One replayed input on one line: its line number, the input, and
-    /// its effects, with the count the dump recorded when it differs.
+    /// One replayed input on one line: its line number, when it arrived,
+    /// the input, and its effects, with the count the dump recorded when
+    /// it differs.
     #[must_use]
     pub fn line(&self, replayed: &Replayed) -> String {
         let count = replayed.effects.len();
         let mut out = format!(
-            "{}: {}. {count} effect{}",
+            "{}: at_us {}, {}. {count} effect{}",
             replayed.line,
-            describe_input(&replayed.input),
+            replayed.arrival.at_us,
+            describe_input(&replayed.arrival.input),
             if count == 1 { "" } else { "s" }
         );
         if replayed.differs() {
@@ -377,45 +323,54 @@ mod tests {
 
     #[test]
     fn a_long_text_is_shortened_with_its_length() {
-        let input = typed(TraceId::from_raw(3), &"x".repeat(100), 5);
+        let arrival = typed(TraceId::from_raw(3), &"x".repeat(100), 5);
         assert_eq!(
-            describe_input(&input),
+            describe_input(&arrival.input),
             format!(
-                "Queue trace 3, at_us 5000, input Press pressed_at_us 5000, action Typed text \"{}...\" (100 characters), key_seq 1",
+                "Queue trace 3, input Press pressed_at_us 5000, action Typed text \"{}...\" (100 characters), key_seq 1",
                 "x".repeat(80)
             )
         );
-        assert_eq!(input_time_us(&input), Some(5_000));
     }
 
     /// A key typing `text` at `at_ms`, as the hook reports it to the
     /// event queue.
-    fn typed(trace: TraceId, text: &str, at_ms: u64) -> Input {
-        Input::Queue {
-            trace_id: trace,
+    fn typed(trace: TraceId, text: &str, at_ms: u64) -> Arrival {
+        Arrival {
             at_us: at_ms * 1_000,
-            input: verbatim_model::request::QueueInput::Press(Box::new(
-                verbatim_model::request::Press {
-                    key_seq: verbatim_model::KeySeq::new(1),
-                    pressed_at_us: at_ms * 1_000,
-                    action: verbatim_model::request::PressAction::Typed {
-                        text: text.to_owned(),
+            input: Input::Queue {
+                trace_id: trace,
+                input: verbatim_model::request::QueueInput::Press(Box::new(
+                    verbatim_model::request::Press {
+                        key_seq: verbatim_model::KeySeq::new(1),
+                        pressed_at_us: at_ms * 1_000,
+                        action: verbatim_model::request::PressAction::Typed {
+                            text: text.to_owned(),
+                        },
                     },
-                },
-            )),
+                )),
+            },
         }
     }
 
-    /// `inputs` replayed as a dump of them read back, each recorded with
+    /// The periodic tick, arriving at `at_ms`.
+    fn tick(at_ms: u64) -> Arrival {
+        Arrival {
+            at_us: at_ms * 1_000,
+            input: Input::Tick,
+        }
+    }
+
+    /// `arrivals` replayed as a dump of them read back, each recorded with
     /// the effect count reducing it gives, from a new state.
-    fn replayed(inputs: Vec<Input>) -> Vec<Replayed> {
+    fn replayed(arrivals: Vec<Arrival>) -> Vec<Replayed> {
         let mut state = verbatim_core::SrState::new();
         let mut runtime = verbatim_core::Runtime::default();
-        let recorded: Vec<verbatim_core::RecordedInput> = inputs
+        let recorded: Vec<verbatim_core::RecordedInput> = arrivals
             .into_iter()
-            .map(|input| verbatim_core::RecordedInput {
-                effect_count: verbatim_core::reduce(&mut state, &mut runtime, &input).len(),
-                input,
+            .map(|arrival| verbatim_core::RecordedInput {
+                effect_count: verbatim_core::reduce(&mut state, &mut runtime, &arrival).len(),
+                arrival,
             })
             .collect();
         let mut out = Vec::new();
@@ -434,17 +389,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_shows_the_inputs_in_its_window_and_its_trace_s_with_the_untimed_placed_by_their_neighbours()
-     {
+    fn a_failure_shows_the_inputs_that_arrived_in_its_window_and_its_trace_s() {
         let trace = TraceId::from_raw(7);
         let other = TraceId::from_raw(8);
         let replayed = replayed(vec![
             typed(other, "a", 5_000),
             typed(trace, "b", 9_000),
             typed(other, "c", 11_000),
-            Input::Tick,
-            // A zero stamp is no time: placed, like the tick, after "c".
-            typed(other, "d", 0),
+            tick(12_000),
             typed(other, "e", 14_000),
         ]);
         let renderer = Renderer::new(
@@ -457,56 +409,34 @@ mod tests {
             shown,
             [
                 Shown {
-                    time_us: Some(9_000_000),
+                    time_us: 9_000_000,
                     line: 4,
-                    text: "(failing trace) 4: Queue trace 7, at_us 9000000, input Press pressed_at_us 9000000, action Typed text \"b\", key_seq 1. 1 effect: Queue".to_owned(),
+                    text: "(failing trace) 4: at_us 9000000, Queue trace 7, input Press pressed_at_us 9000000, action Typed text \"b\", key_seq 1. 1 effect: Queue".to_owned(),
                 },
                 Shown {
-                    time_us: Some(11_000_000),
+                    time_us: 11_000_000,
                     line: 5,
-                    text: "5: Queue trace 8, at_us 11000000, input Press pressed_at_us 11000000, action Typed text \"c\", key_seq 1. 1 effect: Queue".to_owned(),
+                    text: "5: at_us 11000000, Queue trace 8, input Press pressed_at_us 11000000, action Typed text \"c\", key_seq 1. 1 effect: Queue".to_owned(),
                 },
                 Shown {
-                    time_us: Some(11_000_000),
+                    time_us: 12_000_000,
                     line: 6,
-                    text: "(untimed) 6: Tick. 0 effects".to_owned(),
-                },
-                Shown {
-                    time_us: Some(11_000_000),
-                    line: 7,
-                    text: "(untimed) 7: Queue trace 8, at_us 0, input Press pressed_at_us 0, action Typed text \"d\", key_seq 1. 1 effect: Queue".to_owned(),
+                    text: "6: at_us 12000000, Tick. 0 effects".to_owned(),
                 },
             ]
         );
     }
 
     #[test]
-    fn untimed_inputs_before_any_timed_one_take_the_next_one_s_time_and_with_none_timed_are_shown()
-    {
+    fn inputs_outside_the_window_without_the_failing_trace_are_not_shown() {
         let other = TraceId::from_raw(8);
         let renderer = Renderer::new(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../sounds")
                 .as_path(),
         );
-        let replayed_inputs = replayed(vec![Input::Tick, typed(other, "a", 20_000)]);
+        let replayed_inputs = replayed(vec![tick(1_000), typed(other, "a", 20_000)]);
         let shown = failure_inputs(&replayed_inputs, &renderer, None, 10_000_000, 13_000_000);
         assert_eq!(shown, []);
-
-        let shown = failure_inputs(
-            &replayed(vec![Input::Tick]),
-            &renderer,
-            None,
-            10_000_000,
-            13_000_000,
-        );
-        assert_eq!(
-            shown,
-            [Shown {
-                time_us: None,
-                line: 3,
-                text: "(untimed) 3: Tick. 0 effects".to_owned(),
-            }]
-        );
     }
 }

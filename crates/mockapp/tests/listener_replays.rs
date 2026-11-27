@@ -172,16 +172,10 @@ fn replay(name: &str) -> Replayed {
         said: Vec::new(),
         checks: Vec::new(),
     };
-    let mut now_us = 0;
     for recorded in contents.inputs {
-        let mut input = recorded.input;
-        if let Input::Queue {
-            input: queued,
-            at_us,
-            ..
-        } = &mut input
-        {
-            now_us = *at_us;
+        let mut arrival = recorded.arrival;
+        let now_us = arrival.at_us;
+        if let Input::Queue { input: queued, .. } = &mut arrival.input {
             match queued {
                 QueueInput::Process(ProcessFact::ListenerStarted(_)) => {
                     listener.shell.started();
@@ -205,7 +199,7 @@ fn replay(name: &str) -> Replayed {
                 _ => {}
             }
         }
-        for effect in reduce(&mut state, &mut runtime, &input) {
+        for effect in reduce(&mut state, &mut runtime, &arrival) {
             match effect {
                 Effect::Speak(utterance, _) => replayed.said.push(
                     utterance

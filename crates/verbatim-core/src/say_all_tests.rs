@@ -137,7 +137,15 @@ impl Step {
 /// request, say-all speech, a cancel or the display fails the test, so
 /// nothing is skipped unchecked.
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
-    let effects = feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap();
+    let effects = feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap();
     let mut step = Step::default();
     for effect in effects {
         read_effect(&mut step, effect);
@@ -146,8 +154,8 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
 }
 
 /// Feeds the reducer's own `input`, outside the queue, and reads the step.
-fn reduce(held: &mut Held, input: &verbatim_model::Input) -> Step {
-    let effects = crate::reduce(&mut held.state, &mut held.runtime, input);
+fn reduce(held: &mut Held, arrival: &verbatim_model::Arrival) -> Step {
+    let effects = crate::reduce(&mut held.state, &mut held.runtime, arrival);
     let mut step = Step::default();
     for effect in effects {
         match effect {
@@ -468,11 +476,13 @@ fn a_keys_cut_of_speech_stops_say_all_and_withdraws_its_read() {
     assert_eq!(read.sent.len(), 1, "{read:?}");
     let cut = reduce(
         &mut state,
-        &verbatim_model::Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(2),
+        &verbatim_model::Arrival {
+            at_us: 1_250,
+            input: verbatim_model::Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(2),
+                },
             },
         },
     );
@@ -499,10 +509,12 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     };
     let read = by_line(&mut state, vec![line("One.\n", 100, 0), last]);
     assert_eq!(read.texts(), [["One."], ["Two."]]);
-    let cut = |marks: Vec<SpeechMark>| verbatim_model::Input::Queue {
-        trace_id: verbatim_model::TraceId::from_raw(0),
-        at_us: 0,
-        input: verbatim_model::request::QueueInput::UtteranceCancelled { marks, at_ms: 0 },
+    let cut = |marks: Vec<SpeechMark>| verbatim_model::Arrival {
+        at_us: 1_250,
+        input: verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            input: verbatim_model::request::QueueInput::UtteranceCancelled { marks },
+        },
     };
     // An utterance with no mark of say-all's changes nothing.
     let other = reduce(&mut state, &cut(vec![SpeechMark(9_999)]));
@@ -541,11 +553,13 @@ fn say_all_carries_on_past_an_utterance_that_failed() {
     // The first fails: nothing moves, and the third is handed on.
     let failed = reduce(
         &mut state,
-        &verbatim_model::Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::UtteranceFailed {
-                marks: vec![read.said[0].marks[0]],
+        &verbatim_model::Arrival {
+            at_us: 1_250,
+            input: verbatim_model::Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::UtteranceFailed {
+                    marks: vec![read.said[0].marks[0]],
+                },
             },
         },
     );
@@ -579,16 +593,48 @@ fn a_failed_utterance_with_little_left_reads_on_as_an_entry() {
     // the next read joins the queue as its own entry and is asked at once.
     let failed = reduce(
         &mut state,
-        &verbatim_model::Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::UtteranceFailed {
-                marks: vec![read.said[1].marks[0]],
+        &verbatim_model::Arrival {
+            at_us: 1_250,
+            input: verbatim_model::Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::UtteranceFailed {
+                    marks: vec![read.said[1].marks[0]],
+                },
             },
         },
     );
     assert_eq!(failed.said.len(), 2, "{failed:?}");
     assert_eq!(failed.one_sent(), (5, a_line_on(110)));
+}
+
+/// A failed utterance handled at once long after the queue's last input:
+/// the read it wants joins as the queue settles, due 11 seconds
+/// (`event_queue::OTHER_DUE_US`, which say-all's read asks with) from the
+/// failure's own time, not from the last queue input's.
+#[test]
+fn a_read_asked_as_the_queue_settles_is_due_from_the_inputs_own_time() {
+    let mut state = editing();
+    let lines: Vec<TextChunk> = (0..11)
+        .map(|index| line("A b.\n", 100 + index, 0))
+        .collect();
+    let read = by_line(&mut state, lines);
+    let failed = reduce(
+        &mut state,
+        &verbatim_model::Arrival {
+            at_us: 60_000_000,
+            input: verbatim_model::Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::UtteranceFailed {
+                    marks: vec![read.said[1].marks[0]],
+                },
+            },
+        },
+    );
+    assert_eq!(failed.one_sent(), (5, a_line_on(110)));
+    assert_eq!(
+        state.queue.due_for_tests(5),
+        Some(60_000_000 + crate::event_queue::OTHER_DUE_US)
+    );
 }
 
 /// Say-all sets the caret before a key reads it: each move made is taken

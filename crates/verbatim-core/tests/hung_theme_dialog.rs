@@ -177,8 +177,9 @@ fn a_dialog_whose_events_arrive_while_its_window_is_hung_is_spoken_once_it_answe
         reported(THEME_DIALOG, 1_795_249_230_675_135),
     )];
     for (index, recorded) in dump.inputs.into_iter().enumerate() {
-        let Input::Queue { at_us, input, .. } = recorded.input else {
-            panic!("a queue input: {:?}", recorded.input);
+        let at_us = recorded.arrival.at_us;
+        let Input::Queue { input, .. } = recorded.arrival.input else {
+            panic!("a queue input: {:?}", recorded.arrival.input);
         };
         inputs.push((at_us, input));
         match index {

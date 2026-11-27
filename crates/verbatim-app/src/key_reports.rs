@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use verbatim_input::{EmittedGesture, KeySpeechEffect, ScriptAction, Tables};
 use verbatim_model::request::{Press, PressAction, QueueInput};
-use verbatim_model::{CaretKey, CaretMotion, Input, KeySeq, Script, TraceId};
+use verbatim_model::{Arrival, CaretKey, CaretMotion, Input, KeySeq, Script, TraceId};
 use verbatim_process::port_queue::Poster;
 use verbatim_speech::SpeechControl;
 
@@ -144,11 +144,12 @@ pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq)
         KeySpeechEffect::Cancel => {
             ports.post(Post::Cancel(key_seq), Some(key_seq));
             ports.post(
-                Post::Command(ShellCommand::Input(Box::new(Input::Queue {
-                    trace_id: TraceId::mint(),
-                    at_us: verbatim_process::clock::now_us(),
-                    input: QueueInput::SpeechCut { key: key_seq },
-                }))),
+                Post::Command(ShellCommand::Input(Box::new(crate::arrived(
+                    Input::Queue {
+                        trace_id: TraceId::mint(),
+                        input: QueueInput::SpeechCut { key: key_seq },
+                    },
+                )))),
                 Some(key_seq),
             );
         }
@@ -221,10 +222,9 @@ fn press(
 
 /// `input` for Core's event queue, traced `trace_id`, at `at_us`.
 fn queued(trace_id: TraceId, at_us: u64, input: QueueInput) -> ShellCommand {
-    ShellCommand::Input(Box::new(Input::Queue {
-        trace_id,
+    ShellCommand::Input(Box::new(Arrival {
         at_us,
-        input,
+        input: Input::Queue { trace_id, input },
     }))
 }
 
@@ -371,10 +371,9 @@ fn gesture_command(
         return Some(script(Script::ShowMenu));
     }
     if let Some(&toggle) = tables.toggles.get(&gesture.gesture) {
-        return Some(ShellCommand::Input(Box::new(Input::ToggleKeyPressed {
-            trace_id,
-            toggle,
-            pressed_at_ms: pressed_at_us / 1_000,
+        return Some(ShellCommand::Input(Box::new(Arrival {
+            at_us: pressed_at_us,
+            input: Input::ToggleKeyPressed { trace_id, toggle },
         })));
     }
     match tables.scripts.get(&gesture.gesture)? {
@@ -432,7 +431,7 @@ mod tests {
         commands
             .into_iter()
             .map(|command| match command {
-                ShellCommand::Input(input) => match *input {
+                ShellCommand::Input(arrival) => match arrival.input {
                     Input::Queue { input, .. } => format!("{input:?}"),
                     input => format!("{input:?}"),
                 },
@@ -456,7 +455,7 @@ mod tests {
             let [ShellCommand::Input(input)] = commands.as_slice() else {
                 panic!("one input: {} commands", commands.len());
             };
-            let Input::Queue { input, .. } = input.as_ref() else {
+            let Input::Queue { input, .. } = &input.input else {
                 panic!("a queue input: {input:?}");
             };
             assert_eq!(*input, verbatim_model::request::QueueInput::Alt { down });
@@ -587,7 +586,6 @@ mod tests {
                 Input::ToggleKeyPressed {
                     trace_id,
                     toggle: LockKey::ScrollLock,
-                    pressed_at_ms: PRESSED_AT_US / 1_000
                 }
             )]
         );
@@ -645,7 +643,7 @@ mod tests {
     fn typed_keys(port: &mut verbatim_process::port_queue::PortQueue<ShellCommand>) -> Vec<Posted> {
         std::iter::from_fn(|| port.try_recv())
             .map(|command| match command {
-                ShellCommand::Input(input) => match *input {
+                ShellCommand::Input(arrival) => match arrival.input {
                     Input::Queue {
                         input: QueueInput::Press(press),
                         ..

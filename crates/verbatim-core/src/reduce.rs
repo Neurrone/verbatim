@@ -14,9 +14,10 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, Earcon, EarlierElement, Effect, Input, Message, NodeId, NodeSnapshot, Percent,
-    Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority,
-    State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    ActionName, Arrival, Earcon, EarlierElement, Effect, Input, Message, NodeId, NodeSnapshot,
+    Percent, Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent,
+    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
+    WindowFacts,
 };
 use verbatim_model::{
     Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle, WindowIdentity,
@@ -28,6 +29,7 @@ use crate::focus_rules::{
     ChangeKind, ChangeTarget, change_target, is_sensitive_slider, lowest_common_ancestor,
 };
 use crate::foreground::ForegroundFact;
+use crate::now::Now;
 use crate::state::{
     CellMemory, FocusContext, Navigator, NavigatorAt, ReviewText, SpokenRecord, SrState,
 };
@@ -38,23 +40,26 @@ use crate::{editing, say_all, shell, terminal, terminal_model, text};
 /// acceptance"); the supervisor starts an outpost for no other notification.
 pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
-/// Advances `state` by one `input`, changing it in place, and returns the
-/// effects the imperative shell must execute. `runtime` is the event
-/// queue's paused function kept beside `state` by whoever runs the
-/// reducer; the queue's inputs (`Input::Queue`) run with it, rebuilding it
-/// from the state's checkpoint when it has none, beside the inputs
-/// that do not go through the queue.
+/// Advances `state` by one input, `arrival`, changing it in place, and
+/// returns the effects the imperative shell must execute. The input's
+/// arrival time is the one time ([`Now`]) every effect and stamp of its
+/// handling uses. `runtime` is the event queue's paused function kept
+/// beside `state` by whoever runs the reducer; the queue's inputs
+/// (`Input::Queue`) run with it, rebuilding it from the state's checkpoint
+/// when it has none, beside the inputs that do not go through the queue.
 ///
 /// Deterministic: no I/O, no clocks, and no randomness, so the same state
 /// and input always produce the same new state and effects. The state is
 /// changed in place rather than copied, so a step costs nothing for the
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
-pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) -> Vec<Effect> {
+pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, arrival: &Arrival) -> Vec<Effect> {
     // Once Verbatim is exiting nothing more is said or asked.
     if state.exiting {
         return Vec::new();
     }
+    let now = Now::of(arrival);
+    let input = &arrival.input;
     // The speech side's reports and Core's timers reach Core as queue
     // inputs and are handled at once, as the inputs they stand for, from
     // here on (`crate::entries::Routed::AtOnce`).
@@ -62,16 +67,15 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     let (input, mut effects) = match input {
         Input::Queue {
             trace_id,
-            at_us,
             input: queued,
-        } => match crate::entries::route(state, runtime, (*trace_id, *at_us), queued) {
+        } => match crate::entries::route(state, runtime, (*trace_id, now), queued) {
             crate::entries::Routed::Said(said) => (input, said),
             crate::entries::Routed::AtOnce(standing_for) => {
                 at_once = *standing_for;
-                (&at_once, reduce_input(state, &at_once))
+                (&at_once, reduce_input(state, &at_once, now))
             }
         },
-        _ => (input, reduce_input(state, input)),
+        _ => (input, reduce_input(state, input, now)),
     };
     // The terminals Core reads (`terminal_model`) are given the settings.
     if !state.terminals.is_empty() {
@@ -81,33 +85,40 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     // says nothing and ends.
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
+    // A step's own cut fences no read: only a key's does
+    // (`terminal::Cut`).
     if effects.iter().any(terminal::cuts_speech) {
-        let cut = terminal::cut(state, 0);
+        let cut = terminal::cut(state, terminal::Cut::Step, now);
         effects.extend(cut);
     }
     // A say-all in the event queue changed by an input outside it, such as
     // the speech side's cut: the queue settles, its entries stamping their
     // own speech.
-    if !matches!(input, Input::Queue { .. }) && crate::entries::unsettled(state) {
+    if !matches!(input, Input::Queue { .. }) && crate::entries::unsettled(state, now) {
         let trace_id = input.trace_id().unwrap_or(state.queue_trace.0);
-        effects.extend(crate::entries::settle(state, runtime, trace_id));
+        effects.extend(crate::entries::settle(state, runtime, (trace_id, now)));
     }
     effects
 }
 
-/// [`reduce`]'s dispatch, by input.
-fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+/// [`reduce`]'s dispatch, by input, handled at `now`.
+fn reduce_input(state: &mut SrState, input: &Input, now: Now) -> Vec<Effect> {
     match input {
-        Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
+        Input::TerminalTimer { trace_id, at_ms } => {
+            terminal_model::timer(state, *trace_id, *at_ms, now)
+        }
         Input::Settings(settings) => {
             let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
-                    crate::terminal::drop_waiting(state)
+                    crate::terminal::drop_waiting(state, now)
                 } else {
                     Vec::new()
                 };
             state.settings = *settings;
             effects
+        }
+        Input::ToggleKeyPressed { toggle, .. } => {
+            shell::toggle_key_pressed(state, *toggle, now.ms())
         }
         Input::Reported(reported) => {
             state.reported = *reported;
@@ -116,8 +127,8 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
-        Input::UtteranceCancelled { marks, at_ms } => {
-            let mut effects = terminal::utterance_cancelled(state, marks, *at_ms);
+        Input::UtteranceCancelled { marks } => {
+            let mut effects = terminal::utterance_cancelled(state, marks, now);
             effects.extend(say_all::utterance_cancelled(state, marks));
             effects
         }
@@ -126,7 +137,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::UtteranceFailed { marks } => {
             let mut effects = say_all::utterance_failed(state, marks);
             for mark in marks {
-                effects.extend(terminal::mark_reached(state, *mark));
+                effects.extend(terminal::mark_reached(state, *mark, now));
             }
             effects
         }
@@ -170,8 +181,6 @@ pub(crate) fn activation_completed(
 /// The parts of a `FocusChanged` event the focus handling reads.
 struct FocusReport<'a> {
     node: &'a NodeSnapshot,
-    /// When its outpost observed it, in microseconds; 0 when not known.
-    observed_at_us: u64,
     /// Whether it is a whole-window focus.
     whole_window: bool,
     /// Its ancestors, outermost first, complete to the desktop.
@@ -198,7 +207,6 @@ impl Report {
     fn view(&self) -> FocusReport<'_> {
         FocusReport {
             node: &self.node,
-            observed_at_us: self.observed_at_us,
             whole_window: self.whole_window,
             ancestors: &self.ancestors,
             text: self.text.as_ref(),
@@ -425,7 +433,6 @@ fn focus_context(
         spoken: spoken_record(previous, report, ancestors),
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
-        observed_at_us: report.observed_at_us,
         reported_format: verbatim_model::TextAttributes::default(),
         value_read_us: None,
         caret: previous

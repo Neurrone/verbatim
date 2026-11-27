@@ -56,6 +56,7 @@ use verbatim_model::{
 use verbatim_text::terminal_rows::Text;
 
 use crate::editing;
+use crate::now::Now;
 use crate::state::{ReviewText, SrState};
 use crate::text;
 
@@ -97,9 +98,10 @@ pub(crate) struct TerminalSpeechState {
     /// which every utterance of output handed to speech carries, whatever
     /// input hands it on; `None` for output the quiet-period timer read.
     pub(crate) key: Option<KeySeq>,
-    /// When speech was last cut off (milliseconds on the shared clock):
-    /// output from a read that began before it was read before the cut,
-    /// and is not spoken.
+    /// When speech was last cut off by a key, or by the speech side's
+    /// report of output it cut ([`Cut`]), in milliseconds on the shared
+    /// clock: output from a read that began before it was read before the
+    /// cut, and is not spoken.
     pub(crate) cut_at_ms: u64,
 }
 
@@ -297,23 +299,30 @@ pub(crate) fn typed_kind(typed: &str) -> TerminalKeyKind {
     }
 }
 
-/// Handles what the focused terminal `node` said, read at `observed_at_ms`:
-/// the answers to keys spoken at once, then the output queued by the flood
-/// policy and the oldest handed to speech.
+/// Handles what the focused terminal `node` said when its quiet-period
+/// timer came due at `due_ms`, at `now`: the answers to keys spoken at
+/// once, then the output queued by the flood policy and the oldest handed
+/// to speech.
 pub(crate) fn speech(
     state: &mut SrState,
-    trace_id: TraceId,
-    observed_at_ms: u64,
+    (trace_id, due_ms): (TraceId, u64),
     node: NodeId,
     speech: Said,
+    now: Now,
 ) -> Vec<Effect> {
     if reading::modelled(state) != Some(node) {
         return Vec::new();
     }
-    // Read before speech was last cut off: the output pending then is
-    // dropped, as NVDA drops it.
-    let before_cut = observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms;
-    take(state, (trace_id, None), Some(node), speech, before_cut)
+    // Held from reads before speech was last cut off: the output pending
+    // then is dropped, as NVDA drops it.
+    let before_cut = due_ms < state.terminal.cut_at_ms;
+    take(
+        state,
+        (trace_id, None),
+        Some(node),
+        (speech, before_cut),
+        now,
+    )
 }
 
 /// Takes in what a full read of the focused terminal `node`, begun at
@@ -324,26 +333,26 @@ pub(crate) fn read_spoken(
     state: &mut SrState,
     under: (TraceId, Option<KeySeq>),
     (node, started_ms): (NodeId, u64),
-    speech: Said,
-    silent: bool,
+    (speech, silent): (Said, bool),
+    now: Now,
 ) -> Vec<Effect> {
     // Only a held key reaches the program later than its press, which cut
     // speech: a read begun while its stroke is unsent, or before it was
     // sent, shows what was written before the key, so its output is the
     // cut's (Claude, 2026-11-27, pending Dickson).
-    let before_held = state.strokes.holds()
-        || (started_ms != 0 && started_ms.saturating_mul(1_000) < state.strokes.held_reached_us());
-    let before_cut =
-        silent || before_held || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
-    take(state, under, Some(node), speech, before_cut)
+    let before_held =
+        state.strokes.holds() || started_ms.saturating_mul(1_000) < state.strokes.held_reached_us();
+    let before_cut = silent || before_held || started_ms < state.terminal.cut_at_ms;
+    take(state, under, Some(node), (speech, before_cut), now)
 }
 
-/// A release read's speech was taken, or the release ended with none: the
-/// look at the backlog waiting for it runs, unless a release read is still
-/// pending ([`reading::release_pending`]), as an owed read sent after it.
-pub(crate) fn release_settled(state: &mut SrState) -> Vec<Effect> {
+/// A release read's speech was taken, or the release ended with none, at
+/// `now`: the look at the backlog waiting for it runs, unless a release
+/// read is still pending ([`reading::release_pending`]), as an owed read
+/// sent after it.
+pub(crate) fn release_settled(state: &mut SrState, now: Now) -> Vec<Effect> {
     if state.terminal.pacing == Pacing::Deciding && !reading::release_pending(state) {
-        return decide_and_pump(state);
+        return decide_and_pump(state, now);
     }
     Vec::new()
 }
@@ -383,15 +392,15 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
 }
 
 /// Takes in what the focused terminal, `node`, said, under a trace and a
-/// key number: speaks the answers to keys, then, unless the output is
-/// `before_cut` (read before a cut), queues it by the flood policy and
-/// hands the oldest to speech.
+/// key number, at `now`: speaks the answers to keys, then, unless the
+/// output is `before_cut` (read before a cut), queues it by the flood
+/// policy and hands the oldest to speech.
 fn take(
     state: &mut SrState,
     (trace_id, key): (TraceId, Option<KeySeq>),
     node: Option<NodeId>,
-    speech: Said,
-    before_cut: bool,
+    (speech, before_cut): (Said, bool),
+    now: Now,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
     for item in &speech.items {
@@ -430,7 +439,7 @@ fn take(
     }
     queue(state, speech.items);
     bound(state);
-    effects.extend(pump(state, trace_id));
+    effects.extend(pump(state, trace_id, now));
     if lines_hold(state) {
         reading::lines_full(state);
     }
@@ -960,7 +969,7 @@ fn output_utterance(
 /// Hands waiting output to speech until enough is ahead of playback, as
 /// far as the group being spoken goes. Handing the group's last line to
 /// speech while Core holds the terminal's reads asks for what is new.
-fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+fn pump(state: &mut SrState, trace_id: TraceId, now: Now) -> Vec<Effect> {
     let mut effects = Vec::new();
     while state.terminal.ahead.len() < AHEAD {
         let terminal = &state.terminal;
@@ -976,7 +985,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         {
             *left = left.saturating_sub(1);
             if *left == 0 {
-                reading::group_last_line(state);
+                reading::group_last_line(state, now);
             }
         }
         // A blank line counts, but is not spoken; a lost read's "more than"
@@ -1043,7 +1052,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     }
     // Blank lines handed on without speech can end a group, or everything
     // waiting, with nothing sounding whose end would look at the backlog.
-    effects.extend(group_end(state).unwrap_or_default());
+    effects.extend(group_end(state, now).unwrap_or_default());
     effects
 }
 
@@ -1052,7 +1061,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 /// everything waiting was. The backlog is looked at, or, while a release
 /// read is pending, the look waits for its speech (`Deciding`); `None`
 /// when the group has not ended so.
-fn group_end(state: &mut SrState) -> Option<Vec<Effect>> {
+fn group_end(state: &mut SrState, now: Now) -> Option<Vec<Effect>> {
     let terminal = &state.terminal;
     let ended = match terminal.pacing {
         Pacing::Idle => false,
@@ -1066,7 +1075,7 @@ fn group_end(state: &mut SrState) -> Option<Vec<Effect>> {
         state.terminal.pacing = Pacing::Deciding;
         return Some(Vec::new());
     }
-    Some(decide_and_pump(state))
+    Some(decide_and_pump(state, now))
 }
 
 /// Handles playback reaching an index mark. An utterance's opening mark:
@@ -1077,7 +1086,7 @@ fn group_end(state: &mut SrState) -> Option<Vec<Effect>> {
 /// only once its last line has been heard, never while output that has
 /// already been written is still on its way (a burst's first line can
 /// start playing before its second line arrives).
-pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
+pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark, now: Now) -> Vec<Effect> {
     let terminal = &mut state.terminal;
     let Some(trace_id) = terminal.trace else {
         return Vec::new();
@@ -1090,53 +1099,79 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
         {
             terminal.ahead.pop_front();
         }
-        return pump(state, trace_id);
+        return pump(state, trace_id, now);
     }
     if terminal.sounding != Some(mark) {
         return Vec::new();
     }
     terminal.sounding = None;
-    group_end(state).unwrap_or_else(|| pump(state, trace_id))
+    group_end(state, now).unwrap_or_else(|| pump(state, trace_id, now))
 }
 
 /// The flood policy's decision ([`decide`]), then the next group handed to
 /// speech; with nothing left waiting, reading goes live again.
-fn decide_and_pump(state: &mut SrState) -> Vec<Effect> {
+fn decide_and_pump(state: &mut SrState, now: Now) -> Vec<Effect> {
     let Some(trace_id) = state.terminal.trace else {
         return Vec::new();
     };
     decide(state);
-    let effects = pump(state, trace_id);
-    reading::looked(state, state.terminal.waiting.is_empty());
+    let effects = pump(state, trace_id, now);
+    reading::looked(state, state.terminal.waiting.is_empty(), now);
     effects
 }
 
-/// Speech was cut off (at `at_ms`, when known): output waiting or handed to
+/// What cut speech off, which says whether reads begun before it are held
+/// back. Only a key's cut holds back the output of a read begun before it
+/// (`docs/parity/terminals.md`, "Output", Dickson 2026-10-10); a cut by
+/// anything else leaves an earlier read to be spoken, as NVDA speaks a
+/// monitor read queued after its cancel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Cut {
+    /// A key's press cut speech (`QueueInput::SpeechCut`).
+    Key,
+    /// The speech side reported an utterance cut off whose marks the
+    /// output handed to speech still waits for: reported before any other
+    /// cut dropped that output, which in practice is a key's cancel that
+    /// reached the speech side before the key's own cut reached Core.
+    Utterance,
+    /// A step's own interrupting speech or `StopSpeech`.
+    Step,
+}
+
+/// Speech was cut off at `now`, by `cut`: output waiting or handed to
 /// speech is dropped, and changes held unread are read to the end without
-/// speaking, so nothing from before the cut is spoken.
-pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
+/// speaking; a key's cut, or the speech side's, also holds back the
+/// output of reads begun before it.
+pub(crate) fn cut(state: &mut SrState, cut: Cut, now: Now) -> Vec<Effect> {
     let terminal = &mut state.terminal;
     terminal.waiting.clear();
     terminal.ahead.clear();
     terminal.sounding = None;
     terminal.pacing = Pacing::Idle;
-    terminal.cut_at_ms = terminal.cut_at_ms.max(at_ms);
-    reading::cut(state);
+    match cut {
+        Cut::Key | Cut::Utterance => terminal.cut_at_ms = terminal.cut_at_ms.max(now.ms()),
+        Cut::Step => {}
+    }
+    reading::cut(state, now);
     Vec::new()
 }
 
-/// An utterance cut off at `at_ms` before playback reached `marks`: when
-/// output handed to speech waits for one of them, speech was cut off, and
-/// the output still waiting is dropped, as a key's cut drops it.
+/// An utterance reported cut off at `now` before playback reached `marks`:
+/// when output handed to speech waits for one of them, speech was cut
+/// off, and the output still waiting is dropped, as a key's cut drops it.
 pub(crate) fn utterance_cancelled(
     state: &mut SrState,
     marks: &[SpeechMark],
-    at_ms: u64,
+    now: Now,
 ) -> Vec<Effect> {
     let terminal = &state.terminal;
     let waits = terminal.sounding.is_some_and(|mark| marks.contains(&mark))
         || terminal.ahead.iter().any(|(mark, _)| marks.contains(mark));
-    if waits { cut(state, at_ms) } else { Vec::new() }
+    if waits {
+        cut(state, Cut::Utterance, now)
+    } else {
+        Vec::new()
+    }
 }
 
 /// The focus moves to `node` from the focus `state` still holds: another
@@ -1166,7 +1201,7 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
 
 /// Drops terminal output still waiting to be spoken, as turning "Report new
 /// output" off does, whether by its key or from the settings.
-pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
+pub(crate) fn drop_waiting(state: &mut SrState, now: Now) -> Vec<Effect> {
     let terminal = &mut state.terminal;
     terminal.waiting.clear();
     if terminal.ahead.is_empty() {
@@ -1174,17 +1209,21 @@ pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
     } else if terminal.pacing == Pacing::Deciding {
         terminal.pacing = Pacing::Speaking { left: 0 };
     }
-    reading::cut(state);
+    reading::cut(state, now);
     Vec::new()
 }
 
-/// Verbatim+5: toggles "Report new output", says its new value, and
-/// reports the settings for the shell to save. Turning it off drops the
-/// output still waiting.
-pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+/// Verbatim+5, pressed at `now`: toggles "Report new output", says its new
+/// value, and reports the settings for the shell to save. Turning it off
+/// drops the output still waiting.
+pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId, now: Now) -> Vec<Effect> {
     let on = !state.settings.report_terminal_output;
     state.settings.report_terminal_output = on;
-    let mut effects = if on { Vec::new() } else { drop_waiting(state) };
+    let mut effects = if on {
+        Vec::new()
+    } else {
+        drop_waiting(state, now)
+    };
     effects.extend([
         editing::speak(
             trace_id,

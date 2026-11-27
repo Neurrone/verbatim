@@ -659,10 +659,9 @@ name. The failure's time is read on Verbatim's clock, from the newest
 speech frame's stamp, so an agent's machine whose clock differs from this one's
 still shows the right inputs. The flight recorder's inputs are replayed
 and rendered on one line each, as `cargo xtask replay` prints them
-("Replaying a run"); one of the failing step's trace is marked
-`(failing trace)` after the file's name, and one with no time of its own,
-such as an outpost's answer, is marked `(untimed)` and takes the time of
-the input before it. Third, the run's timeline up to
+("Replaying a run"), each at the time it arrived; one of the failing
+step's trace is marked `(failing trace)` after the file's name. Third,
+the run's timeline up to
 the failure: each earlier step on one line (when it started, the input,
 and what was said), then the failing step in full, one entry per line,
 each prefixed with the milliseconds since the first entry.

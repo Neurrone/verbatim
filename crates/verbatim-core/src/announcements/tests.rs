@@ -230,7 +230,10 @@ fn said_with_priority(
     crate::entries::feed(
         &mut state.state,
         &mut state.runtime,
-        crate::event_queue::Timed { at_us, input },
+        crate::event_queue::Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
     )
     .unwrap()
     .into_iter()

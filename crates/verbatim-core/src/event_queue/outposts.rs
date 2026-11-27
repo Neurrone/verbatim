@@ -50,7 +50,7 @@ impl<L: Logic> Core<L> {
     /// armed; any other report is an older generation's, dropped.
     fn outpost_started(&mut self, process: Pid, generation: u64) {
         let mut shared = self.shared.borrow_mut();
-        let now_us = shared.state.queue.now_us;
+        let now_us = shared.now_us();
         let record = &mut shared.state.queue.record;
         match record.applications.get_mut(&process) {
             Some(application) if application.stage == Stage::Launching => {
@@ -99,7 +99,7 @@ impl<L: Logic> Core<L> {
     /// first failure, else after its backoff.
     fn replace(&mut self, process: Pid, up: Duration) {
         let mut shared = self.shared.borrow_mut();
-        let now_us = shared.state.queue.now_us;
+        let now_us = shared.now_us();
         if shared.state.queue.record.failed(process, up, now_us) == Some(Replaced::AtOnce) {
             shared
                 .effects
@@ -161,7 +161,7 @@ impl<L: Logic> Core<L> {
                 .applications
                 .get(&process)
                 .map(|application| application.stage);
-            (stage, queue.now_us)
+            (stage, shared.now_us())
         };
         match stage {
             Some(Stage::Starting(running)) if running.generation == instance.generation => {
@@ -191,7 +191,7 @@ impl<L: Logic> Core<L> {
         };
         let current = {
             let mut shared = self.shared.borrow_mut();
-            let now_us = shared.state.queue.now_us;
+            let now_us = shared.now_us();
             if let Some(application) = shared.state.queue.record.applications.get_mut(&process)
                 && let Stage::Starting(running) | Stage::Ready(running) = &mut application.stage
                 && running.generation == instance.generation
@@ -307,7 +307,7 @@ impl<L: Logic> Core<L> {
                 .iter()
                 .map(|(process, application)| (*process, application.clone()))
                 .collect();
-            (queue.now_us, applications)
+            (shared.now_us(), applications)
         };
         for (process, application) in applications {
             match application.stage {

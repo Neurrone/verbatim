@@ -112,10 +112,9 @@ carry.
   trace an input carries, for those that carry one: the trace the shell
   executes the input's effects under.
   - Inputs are `Queue` (an input to Core's event queue, ADR 0003, a `QueueInput`
-    below, with the trace it runs under and its time on the run's shared
-    clock; every key and command arrives this way, as a press),
-    `ToggleKeyPressed` (a lock key reached the operating system, with its
-    press time), timer ticks, the speech inputs under "The text protocol",
+    below, with the trace it runs under; every key and command arrives
+    this way, as a press), `ToggleKeyPressed` (a lock key reached the
+    operating system, its arrival stamped at its press), timer ticks, the speech inputs under "The text protocol",
     `Settings` and `Reported` (the reader settings, and the details the
     active theme reports, from which Core chooses each read's details),
     and what the
@@ -629,7 +628,7 @@ search whose steps did not all run.
   whether Shift extends the selection; `CaretMotion::unit` is the unit
   spoken after it. [verbatim-input](verbatim-input.md)'s `caret_bindings`
   maps gestures to these.
-- `Input::UtteranceCancelled { marks, at_ms }`,
+- `Input::UtteranceCancelled { marks }`,
   `Input::UtteranceFailed { marks }`: what the speech pipeline reports of
   the marks the reducer placed.
 - `Input::Settings(ReaderSettings)` and
@@ -637,6 +636,9 @@ search whose steps did not all run.
   change.
 - `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
   quiet-period timer came due, at the due time Core's state gave.
+- Every input reaches the reducer as an `Arrival { at_us, input }`,
+  stamped on the run's shared clock where it was made: the one time Core
+  takes for its handling.
 - The shell sends the speech side's reports and its timers as queue
   inputs (`Input::Queue`), handled at once by Core:
   `QueueInput::SpeechCut { key }` (the press of key `key`, a modifier

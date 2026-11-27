@@ -382,15 +382,20 @@ pub(crate) async fn read_current(cx: &mut Cx<Entries>, read: &CurrentFocus, dept
             false,
         ) == super::validity::Validity::Duplicate;
     let origin = Origin::of_read(read.trace_id, read.window, read.fence);
+    let now = cx.now();
     let executed = {
         let mut facts = cx.facts_mut();
         match read.why {
-            Why::Startup | Why::Returned => {
-                execute(&mut facts, &origin, &answer, &Known::default(), &read_by)
-            }
+            Why::Startup | Why::Returned => execute(
+                &mut facts,
+                &origin,
+                &answer,
+                &Known::default(),
+                (&read_by, now),
+            ),
             Why::Recovered if duplicate => Executed::default(),
             Why::Retake | Why::Recovered | Why::Shown => {
-                retake(&mut facts, &origin, &answer, &read_by)
+                retake(&mut facts, &origin, &answer, (&read_by, now))
             }
         }
     };

@@ -347,10 +347,9 @@ impl Seam {
         let effects = reduce(
             &mut self.core,
             &mut self.runtime,
-            &CoreInput::Queue {
-                trace_id,
+            &verbatim_model::Arrival {
                 at_us: self.now,
-                input,
+                input: CoreInput::Queue { trace_id, input },
             },
         );
         let mut seen = Vec::new();

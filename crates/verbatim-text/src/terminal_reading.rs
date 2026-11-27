@@ -873,10 +873,9 @@ impl TerminalReader {
         self.idle()
     }
 
-    /// The focus arrived at the terminal at `at_ms` ("The focus"): the
-    /// next read speaks nothing and puts the review cursor at the caret.
-    pub fn focus(&mut self, at_ms: u64) -> Step {
-        let _ = at_ms;
+    /// The focus arrived at the terminal ("The focus"): the next read
+    /// speaks nothing and puts the review cursor at the caret.
+    pub fn focus(&mut self) -> Step {
         self.focused = true;
         self.fresh = true;
         self.keys.close();

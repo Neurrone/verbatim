@@ -40,7 +40,6 @@ pub(crate) fn focus(top_level: u64) -> Focus {
             snapshot: button,
             reported_focused: false,
             trace_id: None,
-            observed_at_us: 0,
             reported_format: verbatim_model::TextAttributes::default(),
             value_read_us: None,
             caret: None,

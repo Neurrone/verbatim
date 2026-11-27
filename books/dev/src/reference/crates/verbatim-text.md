@@ -309,7 +309,7 @@ every new line goes to Core.
     `Typed`, a caret key with its `Unit` (character, word or line),
     `Enter`, `Forget` (Tab, Escape, Control+C, Control+D, Control+Break,
     which forget held typing), or `Other`.
-  - `focus(at_ms)` and `blur()`.
+  - `focus()` and `blur()`.
   - `timer(now_ms)`: the timer the last step asked for came due.
   - `due()`: when the timer is due as the rules now stand, the same time
     each step gives, for a caller that asks rather than keeps it (Core). It

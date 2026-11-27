@@ -29,6 +29,8 @@ use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
 use serde::{Deserialize, Serialize};
+
+use crate::now::Now;
 use verbatim_model::request::{
     Outcome as WireOutcome, Question, QueueEffect, Reply, RequestNumber,
 };
@@ -36,7 +38,7 @@ use verbatim_model::{Earcon, Effect};
 
 use super::inbox::Timed;
 use super::limiter::{self, Item};
-use super::request::{Outcome, Refused, Request, Stamps};
+use super::request::{Outcome, Ran, Refused, Request};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
 use super::{Foreground, Function, Instance, Logic, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
@@ -60,6 +62,10 @@ pub(crate) struct Shared<L: Logic> {
     pub(super) state: State<L::Entry, L::Facts>,
     /// What was done while a step ran, taken by the step at its end.
     pub(super) effects: Vec<Effect>,
+    /// The time of the input being handled: set as each step starts, and
+    /// by a rebuild to each time it replays; a function reads it only
+    /// while it runs, inside a step or a rebuild.
+    pub(super) now: Now,
     /// The slot of the front's request, where its ending goes.
     slot: Option<Rc<dyn Slot>>,
     /// Set by an [`Asking`] when it returns pending, cleared before each
@@ -99,6 +105,16 @@ pub(super) struct Beginning {
 }
 
 impl<L: Logic> Shared<L> {
+    /// The time of the input being handled.
+    pub(super) fn now(&self) -> Now {
+        self.now
+    }
+
+    /// [`Shared::now`] in microseconds.
+    pub(super) fn now_us(&self) -> u64 {
+        self.now().us()
+    }
+
     /// Begins `beginning`, the one place every request begins: a request
     /// on a node Core's plain reader holds is answered by it, at once and
     /// unsent; any other goes to its reader's running instance, or waits
@@ -110,7 +126,7 @@ impl<L: Logic> Shared<L> {
             None => Route::Reader(beginning.reader),
         };
         let ready = self.state.queue.readers.get(&beginning.reader).copied();
-        let now_us = self.state.queue.now_us;
+        let now_us = self.now_us();
         let mut orders = Vec::new();
         let state = &mut self.state;
         let number = state.queue.table.begin(
@@ -156,7 +172,7 @@ impl<L: Logic> Shared<L> {
             self.effects
                 .push(Effect::PlayEarcon(Earcon::AppNotResponding));
         }
-        let now_us = self.state.queue.now_us;
+        let now_us = self.now_us();
         self.state.queue.table.watch(*window, now_us);
     }
 
@@ -164,7 +180,7 @@ impl<L: Logic> Shared<L> {
     /// attention, watched every half second until it answers again.
     pub(super) fn watch_if_attended(&mut self, window: &RequestWindow) {
         if self.attended(window) {
-            let now_us = self.state.queue.now_us;
+            let now_us = self.now_us();
             self.state.queue.table.watch(*window, now_us);
         }
     }
@@ -194,9 +210,6 @@ impl<E, F: Default> Default for State<E, F> {
 /// checkpoint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Queue<E, F> {
-    /// The time of the input being handled, in microseconds on the run's
-    /// shared clock.
-    pub(super) now_us: u64,
     /// The front entry.
     pub(super) front: Option<Front<E>>,
     /// The entries waiting behind it, in arrival order.
@@ -223,7 +236,6 @@ pub(crate) struct Queue<E, F> {
 impl<E, F> Default for Queue<E, F> {
     fn default() -> Self {
         Self {
-            now_us: 0,
             front: None,
             waiting: VecDeque::new(),
             table: Table::default(),
@@ -281,7 +293,7 @@ impl<E, F> Queue<E, F> {
     /// started) and for a generation that answers every ping, its
     /// liveness due at the clock's end.
     #[cfg(test)]
-    pub(crate) fn start_for_tests(&mut self, instance: Instance) {
+    pub(crate) fn start_for_tests(&mut self, instance: Instance, started_us: u64) {
         use crate::supervisor::record::{Running, Stage};
         match instance.reader {
             Reader::Listener => self.record.listener = Some(instance.generation),
@@ -292,7 +304,7 @@ impl<E, F> Queue<E, F> {
                 if let Some(application) = self.record.applications.get_mut(&process) {
                     application.stage = Stage::Starting(Running {
                         generation: instance.generation,
-                        started_us: self.now_us,
+                        started_us,
                         pong_us: u64::MAX - crate::supervisor::record::LIVENESS_US,
                     });
                 }
@@ -316,23 +328,19 @@ impl<E, F> Queue<E, F> {
         }
     }
 
-    /// Why the front's request out ends now, judged for `cause` with
+    /// Why the front's request out ends at `now`, judged for `cause` with
     /// `facts` by the one judge ([`Logic::ends`]), with its number.
     pub(crate) fn front_ends<L: Logic<Entry = E, Facts = F>>(
         &self,
         facts: &F,
         cause: super::Cause<'_, E>,
+        now: Now,
     ) -> Option<(RequestNumber, verbatim_model::request::CancelReason)> {
         let front = self.front.as_ref()?;
         let number = front.asked?;
         let live = self.table.live(number)?;
-        let at = (&self.backend, self.now_us, self.foreground);
+        let at = (&self.backend, now.us(), self.foreground);
         L::ends(facts, (&front.entry, live), cause, at).map(|reason| (number, reason))
-    }
-
-    /// The time of the last input handled.
-    pub(crate) fn now_us(&self) -> u64 {
-        self.now_us
     }
 
     /// Every request waiting or out, as sent: the ids each names stay held
@@ -402,6 +410,17 @@ impl<E, F> Queue<E, F> {
         self.table.last_for_tests()
     }
 
+    /// When the next half-second hang round is due, while one is armed.
+    pub(crate) fn round_due_for_tests(&self) -> Option<u64> {
+        self.table.round_due_for_tests()
+    }
+
+    /// When Core stops waiting for request `number`, while it waits or is
+    /// out.
+    pub(crate) fn due_for_tests(&self, number: u64) -> Option<u64> {
+        self.table.due_for_tests(number)
+    }
+
     /// The front entry, if any.
     pub(crate) fn front_for_tests(&self) -> Option<&E> {
         self.front.as_ref().map(|front| &front.entry)
@@ -423,11 +442,14 @@ impl<E, F> Checkpoint<E, F> {
 pub(crate) struct Checkpoint<E, F> {
     /// The state when the entry started, with no checkpoint of its own.
     base: State<E, F>,
+    /// The time of the input in whose step the entry started, which its
+    /// function's first poll reads: the one time Core keeps past a step.
+    started: Now,
     /// Each request the function asked, in order.
     asked: Vec<Question>,
     /// Each ending it had, in order, with the time of the input that
     /// brought it.
-    answers: Vec<(u64, Ending)>,
+    answers: Vec<(Now, Ending)>,
 }
 
 /// The front entry, the outcome of each request it has had, and its
@@ -472,7 +494,6 @@ impl<L: Logic> fmt::Debug for Core<L> {
         let state = &shared.state;
         formatter
             .debug_struct("Core")
-            .field("now_us", &state.queue.now_us)
             .field("front", &state.queue.front)
             .field("waiting", &state.queue.waiting)
             .field("timers", &state.queue.timers)
@@ -485,18 +506,22 @@ impl<L: Logic> fmt::Debug for Core<L> {
     }
 }
 
+#[cfg(test)]
 impl<L: Logic> Default for Core<L> {
+    /// A new instance, as a test's first input finds it.
     fn default() -> Self {
-        Self::from_state(State::default())
+        Self::from_state(State::default(), Now::from_raw(0))
     }
 }
 
 impl<L: Logic> Core<L> {
-    pub(super) fn from_state(state: State<L::Entry, L::Facts>) -> Self {
+    /// An instance holding `state`, made in the step of the input at `now`.
+    pub(super) fn from_state(state: State<L::Entry, L::Facts>, now: Now) -> Self {
         Self {
             shared: Rc::new(RefCell::new(Shared {
                 state,
                 effects: Vec::new(),
+                now,
                 slot: None,
                 parked: false,
                 unanswered: 0,
@@ -554,7 +579,8 @@ impl<L: Logic> Core<L> {
     #[cfg(test)]
     pub(crate) fn checkpoint(&self) -> Result<Self, ReplayMismatch> {
         let state = self.shared.borrow().state.clone();
-        let fresh = Self::rebuild(&state)?;
+        let now = self.shared.borrow().now;
+        let fresh = Self::rebuild(&state, now)?;
         fresh.shared.borrow_mut().state = state;
         Ok(fresh)
     }
@@ -571,9 +597,12 @@ impl<L: Logic> Core<L> {
     /// [`ReplayMismatch`] when the rebuilt function does not ask exactly
     /// the requests the checkpoint records and pause in the last, or the
     /// state has a front with no checkpoint.
-    pub(crate) fn rebuild(state: &State<L::Entry, L::Facts>) -> Result<Self, ReplayMismatch> {
+    pub(crate) fn rebuild(
+        state: &State<L::Entry, L::Facts>,
+        now: Now,
+    ) -> Result<Self, ReplayMismatch> {
         let Some(front) = &state.queue.front else {
-            return Ok(Self::default());
+            return Ok(Self::from_state(State::default(), now));
         };
         let Some(checkpoint) = state.queue.checkpoint.as_deref() else {
             return Err(ReplayMismatch {
@@ -581,19 +610,20 @@ impl<L: Logic> Core<L> {
                 original: format!("{front:?}"),
             });
         };
-        let mut fresh = Self::from_state(checkpoint.base.clone());
+        let mut fresh = Self::from_state(checkpoint.base.clone(), checkpoint.started);
         fresh.shared.borrow_mut().rebuilding = true;
         fresh.shared.borrow_mut().state.queue.checkpoint = Some(Box::new(Checkpoint {
             base: State::default(),
+            started: checkpoint.started,
             asked: Vec::new(),
             answers: Vec::new(),
         }));
         fresh.start(front.entry.clone());
-        for (at_us, ending) in &checkpoint.answers {
+        for (at, ending) in &checkpoint.answers {
             if fresh.task.is_none() {
                 break;
             }
-            fresh.shared.borrow_mut().state.queue.now_us = *at_us;
+            fresh.shared.borrow_mut().now = *at;
             fresh.resume(ending.clone());
         }
         let mismatch = {
@@ -641,7 +671,7 @@ impl<L: Logic> Core<L> {
     ) -> Result<Vec<Effect>, ReplayMismatch> {
         let mut core = match paused.take() {
             Some(core) => core,
-            None => Self::rebuild(state)?,
+            None => Self::rebuild(state, input.now)?,
         };
         std::mem::swap(&mut core.shared.borrow_mut().state, state);
         let effects = core.feed(input);
@@ -708,8 +738,10 @@ impl<L: Logic> Core<L> {
                 // the state is not copied for one.
                 if !L::asks_nothing(&entry) {
                     let base = shared.state.clone();
+                    let started = shared.now();
                     shared.state.queue.checkpoint = Some(Box::new(Checkpoint {
                         base,
+                        started,
                         asked: Vec::new(),
                         answers: Vec::new(),
                     }));
@@ -763,14 +795,14 @@ impl<L: Logic> Core<L> {
         let (shown, undecodable) = slot.deliver(ending.clone());
         {
             let mut shared = self.shared.borrow_mut();
-            let now_us = shared.state.queue.now_us;
+            let now = shared.now();
             let queue = &mut shared.state.queue;
             let number = queue.front.as_mut().and_then(|front| {
                 front.answers.push(shown);
                 front.asked.take()
             });
             if let Some(checkpoint) = queue.checkpoint.as_mut() {
-                checkpoint.answers.push((now_us, ending));
+                checkpoint.answers.push((now, ending));
             }
             if let (true, Some(number)) = (undecodable, number) {
                 shared
@@ -855,7 +887,7 @@ struct Typed<R: Request> {
 }
 
 impl<R: Request> Typed<R> {
-    fn decode(&self, reply: Reply, ran: Stamps) -> Result<R::Reply, Undecodable> {
+    fn decode(&self, reply: Reply, ran: Ran) -> Result<R::Reply, Undecodable> {
         self.request.decode(reply, ran).ok_or(Undecodable)
     }
 }
@@ -868,9 +900,9 @@ pub(super) fn widen<T>(outcome: Outcome<Infallible>) -> Outcome<T> {
     }
 }
 
-/// `ending` as Core's outcome, a result left as it arrived, with when
-/// its reader's worker ran it.
-pub(super) fn outcome_of(ending: Ending) -> Result<(Reply, Stamps), Outcome<Infallible>> {
+/// `ending` as Core's outcome, a result left as it arrived, with who ran
+/// it.
+pub(super) fn outcome_of(ending: Ending) -> Result<(Reply, Ran), Outcome<Infallible>> {
     match ending {
         // Decoded only by a current-focus read's own reply.
         Ending::InFront(_) => Err(Outcome::Refused(Refused::Undecodable)),
@@ -1018,6 +1050,11 @@ impl<L: Logic> Cx<L> {
         self.shared.borrow().state.queue.foreground
     }
 
+    /// The time of the input being handled.
+    pub(crate) fn now(&self) -> Now {
+        self.shared.borrow().now()
+    }
+
     /// The running instance of `reader`, if it can take requests.
     pub(crate) fn instance(&self, reader: Reader) -> Option<Instance> {
         self.shared
@@ -1031,7 +1068,7 @@ impl<L: Logic> Cx<L> {
 
     /// The time of the input being handled.
     pub(crate) fn now_us(&self) -> u64 {
-        self.shared.borrow().state.queue.now_us
+        self.shared.borrow().now_us()
     }
 
     /// The due time of a request, or a chain of requests, Core decides to
@@ -1045,13 +1082,14 @@ impl<L: Logic> Cx<L> {
     /// queue now, as an arriving entry joins it.
     pub(crate) fn join(&mut self, entry: L::Entry) {
         let mut shared = self.shared.borrow_mut();
-        super::inbox::join::<L>(&mut shared.state, entry);
+        let now = shared.now();
+        super::inbox::join::<L>(&mut shared.state, entry, now);
     }
 
     /// Appends `entry` to the back of the queue `after_us` from now.
     pub(crate) fn append_after(&mut self, after_us: u64, entry: L::Entry) {
         let mut shared = self.shared.borrow_mut();
-        let at_us = shared.state.queue.now_us.saturating_add(after_us);
+        let at_us = shared.now_us().saturating_add(after_us);
         shared.state.queue.timers.push((at_us, entry));
     }
 
@@ -1064,7 +1102,7 @@ impl<L: Logic> Cx<L> {
         picks: impl Fn(&L::Entry) -> bool,
     ) -> bool {
         let shared = self.shared.borrow();
-        let at_us = shared.state.queue.now_us.saturating_add(after_us);
+        let at_us = shared.now_us().saturating_add(after_us);
         shared
             .state
             .queue

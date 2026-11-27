@@ -44,11 +44,14 @@ fn terminal(flavor: Flavor, text: &str, limit: u16) -> Session {
         .sim
         .write(format!("{text}{PROMPT}command").as_bytes());
     let mut session = Session::with(outpost);
-    session.input(&Input::Settings(ReaderSettings {
-        terminal_full_lines: verbatim_model::TerminalLines::new(limit),
-        terminal_last_lines: verbatim_model::TerminalLines::new(limit),
-        ..ReaderSettings::default()
-    }));
+    session.input(&verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::Settings(ReaderSettings {
+            terminal_full_lines: verbatim_model::TerminalLines::new(limit),
+            terminal_last_lines: verbatim_model::TerminalLines::new(limit),
+            ..ReaderSettings::default()
+        }),
+    });
     session.manual_play = true;
     session
 }

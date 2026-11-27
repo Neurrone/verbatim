@@ -94,7 +94,8 @@ const CASES: &[Case] = &[
 
 /// Whether `input` carries a full read: a batch's answer with the screen's
 /// text, which only the terminal reader's window read takes.
-fn carries_read(input: &Input) -> bool {
+fn carries_read(arrival: &verbatim_model::Arrival) -> bool {
+    let input = &arrival.input;
     match input {
         Input::Queue {
             input:
@@ -180,7 +181,7 @@ struct Times {
 /// read, and the reducer's step.
 fn time(
     state: &mut verbatim_core::SrState,
-    (input, snapshot): (&Input, &TerminalSnapshot),
+    (input, snapshot): (&verbatim_model::Arrival, &TerminalSnapshot),
     times: &mut Times,
 ) {
     let frame = serde_json::to_string(input).expect("an input serializes");
@@ -225,7 +226,8 @@ fn measure(case: &Case, flavor: Flavor) -> String {
         Output::FullScreenExit => "\x1b[?1049l".to_owned(),
     };
     session.write(&output, 1000);
-    let inputs: Vec<Input> = session.log.drain(..).map(|(input, _)| input).collect();
+    let inputs: Vec<verbatim_model::Arrival> =
+        session.log.drain(..).map(|(input, _)| input).collect();
     let reads: Vec<usize> = inputs
         .iter()
         .enumerate()

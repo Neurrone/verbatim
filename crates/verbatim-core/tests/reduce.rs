@@ -427,11 +427,13 @@ fn change_of_focus(read: verbatim_model::request::NodeRead) -> Reply {
 
 /// A short session through Core's event queue: the listener started and
 /// ready, a focus told from it, and a tick.
-fn sample_script() -> Vec<Input> {
-    let queue = |at_us, input| Input::Queue {
-        trace_id: TraceId::from_raw(47),
+fn sample_script() -> Vec<verbatim_model::Arrival> {
+    let queue = |at_us, input| verbatim_model::Arrival {
         at_us,
-        input,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(47),
+            input,
+        },
     };
     vec![
         queue(
@@ -446,7 +448,10 @@ fn sample_script() -> Vec<Input> {
                 tell: Box::new(focus_tell(ONE, 1, 3_000)),
             },
         ),
-        Input::Tick,
+        verbatim_model::Arrival {
+            at_us: 4_000,
+            input: Input::Tick,
+        },
     ]
 }
 
@@ -491,7 +496,7 @@ struct Recorded {
     recorder: ReducerRecorder,
     at_us: u64,
     /// Every input fed, in order, with its effects.
-    fed: Vec<(Input, Vec<Effect>)>,
+    fed: Vec<(verbatim_model::Arrival, Vec<Effect>)>,
     /// Every request sent, by number.
     asked: Vec<(u64, verbatim_model::request::Question)>,
 }
@@ -504,10 +509,12 @@ impl Recorded {
         let mut sent = Vec::new();
         while !pending.is_empty() {
             self.at_us += 1_000;
-            let input = Input::Queue {
-                trace_id: TraceId::from_raw(9),
+            let input = verbatim_model::Arrival {
                 at_us: self.at_us,
-                input: pending.remove(0),
+                input: Input::Queue {
+                    trace_id: TraceId::from_raw(9),
+                    input: pending.remove(0),
+                },
             };
             let effects = verbatim_core::reduce(&mut self.state, &mut self.runtime, &input);
             self.recorder

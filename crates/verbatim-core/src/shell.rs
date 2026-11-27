@@ -27,11 +27,6 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             exiting(*replaced)
         }
         Input::ErrorLogged => error_logged(),
-        Input::ToggleKeyPressed {
-            toggle,
-            pressed_at_ms,
-            ..
-        } => toggle_key_pressed(state, *toggle, *pressed_at_ms),
         Input::LockKeyToggled { trace_id, key, on } => {
             // The announcement at the front has come; one from a dump made
             // before announcements were kept has nothing to take.
@@ -108,13 +103,18 @@ pub(crate) fn shell_list_kind(repeat: u8) -> ShellItemKind {
 /// read and announced, as NVDA does: Windows has changed the state by then.
 pub(crate) const TOGGLE_KEY_DELAY_MS: u64 = 30;
 
-/// A lock key reached the operating system at `pressed_at_ms`: its
+/// A lock key reached the operating system at `pressed_at_ms`, its input's
+/// arrival: its
 /// announcement is to come, in press order, once the shell has read the
 /// key's state [`TOGGLE_KEY_DELAY_MS`] later, when the front read's due
 /// time ([`SrState::toggle_key_read_due`]) is past. It never waits behind
 /// a held key, as NVDA starts the announcement's timer when the key is
 /// pressed, outside its script queue.
-fn toggle_key_pressed(state: &mut SrState, toggle: LockKey, pressed_at_ms: u64) -> Vec<Effect> {
+pub(crate) fn toggle_key_pressed(
+    state: &mut SrState,
+    toggle: LockKey,
+    pressed_at_ms: u64,
+) -> Vec<Effect> {
     state
         .toggle_keys
         .push_back((toggle, pressed_at_ms.saturating_add(TOGGLE_KEY_DELAY_MS)));

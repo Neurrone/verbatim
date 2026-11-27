@@ -494,7 +494,7 @@ pub struct Session {
     pub copied: Vec<String>,
     /// Every input given to the reducer since the session began, with its
     /// effects.
-    pub log: Vec<(Input, Vec<Effect>)>,
+    pub log: Vec<(verbatim_model::Arrival, Vec<Effect>)>,
     /// Whether the outpost holds back a count read Core asks for, until
     /// [`Session::answer_held`].
     pub hold_count: bool,
@@ -658,7 +658,7 @@ impl Session {
 
     /// One step of the reducer, logged, with the timer's due time read
     /// after it, as the shell reads it.
-    fn step(&mut self, input: Input) -> Vec<Effect> {
+    fn step(&mut self, input: verbatim_model::Arrival) -> Vec<Effect> {
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
         self.log.push((input, effects.clone()));
         let due = self.state.terminal_timer_due();
@@ -670,11 +670,10 @@ impl Session {
     }
 
     /// `input`, an input of Core's event queue, at the session's time.
-    fn queued_input(&self, trace_id: TraceId, input: QueueInput) -> Input {
-        Input::Queue {
-            trace_id,
+    fn queued_input(&self, trace_id: TraceId, input: QueueInput) -> verbatim_model::Arrival {
+        verbatim_model::Arrival {
             at_us: self.at_ms * 1_000,
-            input,
+            input: Input::Queue { trace_id, input },
         }
     }
 
@@ -689,7 +688,7 @@ impl Session {
 
     /// `key` as the hook reports it to the event queue, numbered in turn,
     /// a held key's stroke numbered as the key is.
-    fn pressed(&mut self, key: &Key) -> Input {
+    fn pressed(&mut self, key: &Key) -> verbatim_model::Arrival {
         self.keys += 1;
         let mut action = key.action.clone();
         if let PressAction::CaretKey {
@@ -698,19 +697,21 @@ impl Session {
         {
             held.stroke.sequence = u32::try_from(self.keys).expect("keys");
         }
-        Input::Queue {
-            trace_id: key.trace_id,
+        verbatim_model::Arrival {
             at_us: key.at_ms * 1_000,
-            input: QueueInput::Press(Box::new(Press {
-                key_seq: KeySeq::new(self.keys),
-                pressed_at_us: key.at_ms * 1_000,
-                action,
-            })),
+            input: Input::Queue {
+                trace_id: key.trace_id,
+                input: QueueInput::Press(Box::new(Press {
+                    key_seq: KeySeq::new(self.keys),
+                    pressed_at_us: key.at_ms * 1_000,
+                    action,
+                })),
+            },
         }
     }
 
     /// Feeds `input`, takes in its effects, and plays what it queued.
-    pub fn input(&mut self, input: &Input) {
+    pub fn input(&mut self, input: &verbatim_model::Arrival) {
         let effects = self.step(input.clone());
         self.run(effects);
         self.settle();

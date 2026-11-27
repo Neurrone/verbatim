@@ -502,7 +502,7 @@ impl Desk {
             &mut self.held.state,
             &mut self.held.runtime,
             Timed {
-                at_us: self.at_us,
+                now: crate::now::Now::from_raw(self.at_us),
                 input,
             },
         )

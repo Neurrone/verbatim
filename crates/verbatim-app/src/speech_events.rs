@@ -20,7 +20,9 @@ use std::time::Instant;
 
 use crate::Commands;
 use verbatim_model::request::QueueInput;
-use verbatim_model::{Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{
+    Arrival, Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId,
+};
 use verbatim_speech::{IndexMark, SpeechEvents, SynthTiming};
 
 use crate::ShellCommand;
@@ -77,7 +79,6 @@ impl SpeechEvents for ShellSpeechEvents {
     fn marks_cancelled(&self, _: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
         let input = queued(QueueInput::UtteranceCancelled {
             marks: marks.iter().map(|mark| SpeechMark(mark.0)).collect(),
-            at_ms: crate::latency::now_ms(),
         });
         if self
             .commands
@@ -121,12 +122,11 @@ impl SpeechEvents for ShellSpeechEvents {
 }
 
 /// `input` for Core's event queue, arriving now.
-fn queued(input: QueueInput) -> Input {
-    Input::Queue {
+fn queued(input: QueueInput) -> Arrival {
+    crate::arrived(Input::Queue {
         trace_id: TraceId::mint(),
-        at_us: verbatim_process::clock::now_us(),
         input,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -160,34 +160,27 @@ mod tests {
             taker.try_recv().is_none(),
             "the observer posted more than one command"
         );
-        let Input::Queue { input, .. } = *input else {
+        let Input::Queue { input, .. } = input.input else {
             panic!("the observer posted {input:?}, not a queue input");
         };
         input
     }
 
     /// A cut utterance's marks re-enter the reducer as
-    /// `QueueInput::UtteranceCancelled`, every mark in order, stamped with the
-    /// time it was reported.
+    /// `QueueInput::UtteranceCancelled`, every mark in order.
     #[test]
     fn a_cut_utterance_reaches_the_reducer_with_its_marks() {
         let (events, mut taker) = observer();
-        let before = crate::latency::now_ms();
         events.marks_cancelled(
             UtteranceId(1),
             TraceId::mint(),
             &[IndexMark(5), IndexMark(6)],
             Instant::now(),
         );
-        let after = crate::latency::now_ms();
-        let QueueInput::UtteranceCancelled { marks, at_ms } = only_input(&mut taker) else {
+        let QueueInput::UtteranceCancelled { marks } = only_input(&mut taker) else {
             panic!("the input is not a cut utterance");
         };
         assert_eq!(marks, vec![SpeechMark(5), SpeechMark(6)]);
-        assert!(
-            (before..=after).contains(&at_ms),
-            "{at_ms} is outside {before}..={after}"
-        );
     }
 
     /// A failed utterance's marks re-enter the reducer as

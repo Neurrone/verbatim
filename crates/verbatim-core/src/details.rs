@@ -117,7 +117,10 @@ mod tests {
         let effects = crate::reduce::reduce(
             &mut state,
             &mut crate::Runtime::default(),
-            &verbatim_model::Input::Reported(reported),
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: verbatim_model::Input::Reported(reported),
+            },
         );
         assert_eq!(effects, Vec::new());
         assert_eq!(state.reported, reported);

@@ -26,52 +26,58 @@ use crate::focus::versions::{LastFocus, ReadBy};
 /// What a step did, as these tests read it: each request by its reader
 /// and what it asks, each indication, and each utterance.
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    crate::entries::feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
-        .into_iter()
-        .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
-                verbatim_model::request::Question::Batch(batch)
-                    if matches!(
-                        batch.steps.as_slice(),
-                        [verbatim_model::batch::Step {
-                            op: verbatim_model::batch::Op::Read {
-                                subject: verbatim_model::batch::Subject::Msaa { .. },
-                                ..
-                            },
+    crate::entries::feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
+            verbatim_model::request::Question::Batch(batch)
+                if matches!(
+                    batch.steps.as_slice(),
+                    [verbatim_model::batch::Step {
+                        op: verbatim_model::batch::Op::Read {
+                            subject: verbatim_model::batch::Subject::Msaa { .. },
                             ..
-                        }]
-                    ) =>
-                {
-                    let verbatim_model::batch::Op::Read { subject, set } = &batch.steps[0].op
-                    else {
-                        unreachable!("matched as a read");
-                    };
-                    format!(
-                        "send {:?} {} ReadObject {subject:?} {set:?}",
-                        to.reader, ask.number.0
-                    )
-                }
-                verbatim_model::request::Question::Batch(batch) => format!(
-                    "send {:?} {} {}",
-                    to.reader,
-                    ask.number.0,
-                    crate::entries::tests::batch_kind(batch)
-                ),
-            }),
-            Effect::PlayEarcon(earcon) => Some(format!("{earcon:?}")),
-            Effect::Speak(utterance, _) => Some(
-                utterance
-                    .segments
-                    .iter()
-                    .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
-                    .map(|segment| format!("{:?}", segment.content))
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                        },
+                        ..
+                    }]
+                ) =>
+            {
+                let verbatim_model::batch::Op::Read { subject, set } = &batch.steps[0].op else {
+                    unreachable!("matched as a read");
+                };
+                format!(
+                    "send {:?} {} ReadObject {subject:?} {set:?}",
+                    to.reader, ask.number.0
+                )
+            }
+            verbatim_model::request::Question::Batch(batch) => format!(
+                "send {:?} {} {}",
+                to.reader,
+                ask.number.0,
+                crate::entries::tests::batch_kind(batch)
             ),
-            _ => None,
-        })
-        .collect()
+        }),
+        Effect::PlayEarcon(earcon) => Some(format!("{earcon:?}")),
+        Effect::Speak(utterance, _) => Some(
+            utterance
+                .segments
+                .iter()
+                .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
+                .map(|segment| format!("{:?}", segment.content))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
+    })
+    .collect()
 }
 
 /// The classic bar's object: window 5, its client, child 0.

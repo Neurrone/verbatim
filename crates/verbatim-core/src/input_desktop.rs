@@ -10,6 +10,7 @@ use verbatim_model::request::SessionLock;
 
 use crate::focus::follow::FollowRequest;
 use crate::focus::retake::CurrentFocus;
+use crate::now::Now;
 use crate::state::SrState;
 
 /// How long after a switch to an input desktop that opens the read after
@@ -65,12 +66,12 @@ pub(crate) struct Switched {
     pub(crate) follows: Vec<FollowRequest>,
 }
 
-/// The input desktop switched at `now_us`; `open` when Verbatim could open
+/// The input desktop switched at `now`; `open` when Verbatim could open
 /// the new one, the user's.
-pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched {
+pub(crate) fn switched(state: &mut SrState, open: bool, now: Now) -> Switched {
     if open {
         state.desktop.input = InputDesktop::ReturnPending {
-            due_us: now_us.saturating_add(RETURN_DELAY_US),
+            due_us: now.after(RETURN_DELAY_US),
         };
         return Switched::default();
     }
@@ -82,7 +83,7 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     state.versions.commit_own();
     // The focused terminal, if any, is left; the switch's stop of speech
     // drops what its flood had waiting.
-    let released = crate::terminal::reading::committed(state, None, Vec::new(), (now_us, true));
+    let released = crate::terminal::reading::committed(state, None, Vec::new(), (now, true));
     debug_assert!(released.is_empty(), "a cutting commit runs no look");
     // The keys held before the switch never reach the application: the
     // hook's line is cleared with its modifiers, and the front's
@@ -108,16 +109,16 @@ pub(crate) fn due(state: &SrState) -> Option<u64> {
     }
 }
 
-/// The time `now_us` came: when the read after the
+/// The time `now` came: when the read after the
 /// return is due, the user's desktop is up again, and the read is
 /// returned to join the back, naming the window in front, `front`;
 /// nothing is read when no window is in front.
 pub(crate) fn tick(
     state: &mut SrState,
-    now_us: u64,
+    now: Now,
     front: Option<&crate::event_queue::Foreground>,
 ) -> Option<CurrentFocus> {
-    if due(state).is_none_or(|due_us| due_us > now_us) {
+    if due(state).is_none_or(|due_us| due_us > now.us()) {
         return None;
     }
     state.desktop.input = InputDesktop::User;

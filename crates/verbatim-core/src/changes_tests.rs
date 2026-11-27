@@ -444,7 +444,7 @@ fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
             &mut state.state,
             &mut state.runtime,
             crate::event_queue::Timed {
-                at_us: 5_000,
+                now: crate::now::Now::from_raw(5_000),
                 input: answer(
                     OUTPOST,
                     4,

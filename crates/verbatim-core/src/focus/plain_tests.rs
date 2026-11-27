@@ -61,35 +61,40 @@ const PLAIN_SPOKEN: &str = "Label(\"hungwin (Not Responding)\") Role(Window)";
 /// request sent by its reader and kind, each utterance by its segments,
 /// the sound, a stop of speech, and the hang check by its windows.
 fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
-        .into_iter()
-        .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => Some(format!(
-                "send {:?} {}",
-                to.reader,
-                crate::entries::tests::kind(&ask)
-            )),
-            Said::Speak(utterance, _) => Some(
-                utterance
-                    .segments
-                    .iter()
-                    .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
-                    .map(|segment| format!("{:?}", segment.content))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
-            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => {
-                Some("sound".to_owned())
-            }
-            Said::StopSpeech => Some("stop".to_owned()),
-            Effect::Queue(QueueEffect::Undecodable(number)) => {
-                Some(format!("undecodable {}", number.0))
-            }
-            Effect::Queue(QueueEffect::CheckHung(windows)) => Some(format!("check {windows:?}")),
-            _ => None,
-        })
-        .collect()
+    feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Queue(QueueEffect::Send { to, ask }) => Some(format!(
+            "send {:?} {}",
+            to.reader,
+            crate::entries::tests::kind(&ask)
+        )),
+        Said::Speak(utterance, _) => Some(
+            utterance
+                .segments
+                .iter()
+                .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
+                .map(|segment| format!("{:?}", segment.content))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => Some("sound".to_owned()),
+        Said::StopSpeech => Some("stop".to_owned()),
+        Effect::Queue(QueueEffect::Undecodable(number)) => {
+            Some(format!("undecodable {}", number.0))
+        }
+        Effect::Queue(QueueEffect::CheckHung(windows)) => Some(format!("check {windows:?}")),
+        _ => None,
+    })
+    .collect()
 }
 
 /// What `from` answering its request `number`, having found `found`, did
@@ -170,8 +175,10 @@ fn plain_committed() -> Held {
 /// Whether hungwin is watched: the half-second round, once due, checks
 /// it.
 fn watched(state: &mut Held) -> bool {
-    let now = state.queue.now_us();
-    effects(state, now + 600_000, Input::Tick) == [format!("check [{HUNGWIN:?}]")]
+    let Some(due) = state.queue.round_due_for_tests() else {
+        return false;
+    };
+    effects(state, due, Input::Tick) == [format!("check [{HUNGWIN:?}]")]
 }
 
 /// The plain object's node of `generation`.
@@ -333,7 +340,7 @@ fn route(state: &mut Held, at_us: u64, input: &QueueInput) -> Vec<Said> {
     crate::entries::route(
         &mut state.state,
         &mut state.runtime,
-        (TraceId::from_raw(1), at_us),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(at_us)),
         input,
     )
     .said()
@@ -829,7 +836,7 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 200_000,
+            now: crate::now::Now::from_raw(200_000),
             input: Input::AskOutside {
                 asker: Asker(5),
                 reader: Reader::Outpost(APP),
@@ -1029,9 +1036,9 @@ fn a_uia_focus_read_afresh_over_a_ghost_or_a_hung_window_plays_the_sound_and_wat
         );
         assert_eq!(effects(&mut state, 3_000, hung_focus(3, front)), ["sound"]);
         assert!(state.state.plain.object.is_none());
-        let now = state.queue.now_us();
+        let due = state.queue.round_due_for_tests().expect("a round armed");
         assert_eq!(
-            effects(&mut state, now + 600_000, Input::Tick),
+            effects(&mut state, due, Input::Tick),
             ["check [WindowHandle(5)]"]
         );
     }

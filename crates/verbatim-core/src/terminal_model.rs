@@ -57,6 +57,7 @@ use verbatim_text::terminal_reading::{
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
+use crate::now::Now;
 use crate::state::SrState;
 use crate::terminal::reader::WindowReply;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
@@ -413,10 +414,10 @@ impl TerminalModel {
         }
     }
 
-    /// The focus arrived at the terminal at `at_ms`: the rules are told,
-    /// and its next read is given to them whatever it shows.
-    pub(crate) fn focused(&mut self, at_ms: u64) {
-        let _ = self.rules().focus(at_ms);
+    /// The focus arrived at the terminal: the rules are told, and its next
+    /// read is given to them whatever it shows.
+    pub(crate) fn focused(&mut self) {
+        let _ = self.rules().focus();
         self.given = Given::Focus;
     }
 
@@ -870,11 +871,12 @@ pub(crate) fn under(key: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
     }
 }
 
-/// The quiet-period timer came due at `at_ms`: the focused terminal's rules
-/// are given the keys that reached the program by then, then the timer.
-/// Its next due time is after `at_ms`, since the shell fires the timer
-/// whenever the due time it reads is past.
-pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<Effect> {
+/// The quiet-period timer came due at `at_ms`, and the shell's input for
+/// it arrived at `now`: the focused terminal's rules are given the keys
+/// that reached the program by its due time, then the timer. Its next due
+/// time is after `at_ms`, since the shell fires the timer whenever the due
+/// time it reads is past.
+pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64, now: Now) -> Vec<Effect> {
     let Some(node) = focused(state) else {
         return Vec::new();
     };
@@ -888,7 +890,7 @@ pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<E
         "the quiet-period timer fired at {at_ms} is due again at {:?}",
         step.timer
     );
-    crate::terminal::speech(state, trace_id, at_ms, node, speech_of(step))
+    crate::terminal::speech(state, (trace_id, at_ms), node, speech_of(step), now)
 }
 
 /// Gives every model's rules the reader settings when they changed:

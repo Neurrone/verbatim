@@ -38,8 +38,10 @@ use crate::state::SrState;
 /// from and whether its working tree had uncommitted changes. Version 8:
 /// the foreground record keeps no applied stamp, and the focus's spoken
 /// record is always present. Version 9: the formatting last reported is
-/// the focus object's. Only the current version is read.
-pub const DUMP_FORMAT_VERSION: u32 = 9;
+/// the focus object's. Version 10: each recorded input carries the time it
+/// arrived, and the state keeps no copy of the time of the input being
+/// handled. Only the current version is read.
+pub const DUMP_FORMAT_VERSION: u32 = 10;
 
 /// The commit a header records when the writing build's commit is not
 /// known: a build made without git.
@@ -299,18 +301,23 @@ mod tests {
     fn sample_inputs() -> Vec<RecordedInput> {
         vec![
             RecordedInput {
-                input: Input::Queue {
-                    trace_id: TraceId::from_raw(1),
+                arrival: verbatim_model::Arrival {
                     at_us: 4_000,
-                    input: QueueInput::Tell {
-                        from: LISTENER,
-                        tell: Box::new(uia_tell(2, Vec::new())),
+                    input: Input::Queue {
+                        trace_id: TraceId::from_raw(1),
+                        input: QueueInput::Tell {
+                            from: LISTENER,
+                            tell: Box::new(uia_tell(2, Vec::new())),
+                        },
                     },
                 },
                 effect_count: 1,
             },
             RecordedInput {
-                input: Input::Tick,
+                arrival: verbatim_model::Arrival {
+                    at_us: 4_500,
+                    input: Input::Tick,
+                },
                 effect_count: 0,
             },
         ]
@@ -431,12 +438,14 @@ mod tests {
         .expect("writes");
 
         let third = RecordedInput {
-            input: Input::Queue {
-                trace_id: TraceId::from_raw(2),
+            arrival: verbatim_model::Arrival {
                 at_us: 5_000,
-                input: QueueInput::Tell {
-                    from: LISTENER,
-                    tell: Box::new(uia_tell(3, Vec::new())),
+                input: Input::Queue {
+                    trace_id: TraceId::from_raw(2),
+                    input: QueueInput::Tell {
+                        from: LISTENER,
+                        tell: Box::new(uia_tell(3, Vec::new())),
+                    },
                 },
             },
             effect_count: 1,

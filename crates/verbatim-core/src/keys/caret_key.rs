@@ -512,10 +512,11 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
                     .pressed_at_us
                     .saturating_add(crate::keys::strokes::RELEASE_AFTER_US)
                     .min(cx.now_us());
+                let now = cx.now();
                 crate::keys::terminal::passed(
                     &mut cx.facts_mut(),
                     crate::terminal::caret_key_kind(press.key),
-                    released_at_us,
+                    (released_at_us, now),
                     (press.trace_id, press.key_seq),
                 );
             }
@@ -756,8 +757,8 @@ async fn terminal_read(
     starting: bool,
     due_us: u64,
 ) -> Option<Option<(TextAnchor, CaretReport)>> {
-    let now_us = cx.now_us();
-    let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now_us)?;
+    let now = cx.now();
+    let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now)?;
     let reply = match cx.ask(asked, due_us).await {
         // A read that fails, the terminal's text unread included, brings
         // nothing.
@@ -776,12 +777,12 @@ async fn terminal_read(
             press.trace_id,
         ));
     }
-    let now_us = cx.now_us();
+    let now = cx.now();
     let entry = crate::terminal::reading::entry_read_ended(
         &mut cx.facts_mut(),
         &asked,
         reply.as_deref(),
-        (now_us, press.trace_id),
+        (now, press.trace_id),
     );
     crate::terminal::reading::speak_read(cx, entry);
     reply.map(|reply| reply.point.zip(reply.snapshot.caret.clone()))
@@ -793,11 +794,11 @@ fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     let unsent = press.held && cx.facts().strokes.status(press.key_seq) == StrokeStatus::Unsent;
     let reached = pass(cx, press);
     if unsent {
-        let now_us = cx.now_us();
+        let now = cx.now();
         crate::keys::terminal::passed(
             &mut cx.facts_mut(),
             crate::terminal::caret_key_kind(press.key),
-            now_us,
+            (now.us(), now),
             (press.trace_id, press.key_seq),
         );
     }

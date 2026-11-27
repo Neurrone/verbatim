@@ -776,7 +776,10 @@ impl CoreDriver {
     /// Gives Core the details the theme reports, as the shell does when a
     /// theme becomes active.
     pub fn reported(&mut self, reported: verbatim_model::ReportedDetails) {
-        self.run(VecDeque::from([Input::Reported(reported)]));
+        self.run(VecDeque::from([verbatim_model::Arrival {
+            at_us: self.now(),
+            input: Input::Reported(reported),
+        }]));
     }
 
     /// Core's state, for a test that reads what it committed.
@@ -792,19 +795,25 @@ impl CoreDriver {
     /// Feeds Core `input`, and everything its effects bring back, in
     /// order.
     fn feed(&mut self, input: QueueInput) {
-        self.run(VecDeque::from([Input::Queue {
-            trace_id: TraceId::mint(),
+        self.run(VecDeque::from([verbatim_model::Arrival {
             at_us: self.now(),
-            input,
+            input: Input::Queue {
+                trace_id: TraceId::mint(),
+                input,
+            },
         }]));
     }
 
-    fn run(&mut self, inputs: VecDeque<Input>) {
+    fn run(&mut self, inputs: VecDeque<verbatim_model::Arrival>) {
         self.run_handling(inputs, &mut || {});
     }
 
     /// [`Self::run`], with `application` handling each key Core sends it.
-    fn run_handling(&mut self, mut inputs: VecDeque<Input>, application: &mut dyn FnMut()) {
+    fn run_handling(
+        &mut self,
+        mut inputs: VecDeque<verbatim_model::Arrival>,
+        application: &mut dyn FnMut(),
+    ) {
         loop {
             while let Some(input) = inputs.pop_front() {
                 let effects = reduce(&mut self.state, &mut self.runtime, &input);
@@ -829,7 +838,7 @@ impl CoreDriver {
 
     /// The outpost's messages since, once it has handled everything handed
     /// to it, as Core's inputs.
-    fn collect(&mut self, inputs: &mut VecDeque<Input>) {
+    fn collect(&mut self, inputs: &mut VecDeque<verbatim_model::Arrival>) {
         self.outpost.settle();
         loop {
             match self.outpost.messages.try_recv() {
@@ -841,7 +850,7 @@ impl CoreDriver {
     }
 
     /// The outpost's `message` as Core's input.
-    fn message(&mut self, message: OutpostToCore, inputs: &mut VecDeque<Input>) {
+    fn message(&mut self, message: OutpostToCore, inputs: &mut VecDeque<verbatim_model::Arrival>) {
         match message {
             OutpostToCore::Answer(mut answer) => {
                 self.open.retain(|open| *open != answer.number);
@@ -867,16 +876,18 @@ impl CoreDriver {
         }
     }
 
-    fn queued(&self, input: QueueInput) -> Input {
-        Input::Queue {
-            trace_id: TraceId::mint(),
+    fn queued(&self, input: QueueInput) -> verbatim_model::Arrival {
+        verbatim_model::Arrival {
             at_us: self.now(),
-            input,
+            input: Input::Queue {
+                trace_id: TraceId::mint(),
+                input,
+            },
         }
     }
 
     /// Carries out one of Core's effects, queuing what it brings back.
-    fn effect(&mut self, effect: Effect, inputs: &mut VecDeque<Input>) {
+    fn effect(&mut self, effect: Effect, inputs: &mut VecDeque<verbatim_model::Arrival>) {
         match effect {
             Effect::Speak(utterance, key) if utterance.say_all => {
                 self.say_all.push(
@@ -915,7 +926,11 @@ impl CoreDriver {
         }
     }
 
-    fn queue_effect(&mut self, effect: QueueEffect, inputs: &mut VecDeque<Input>) {
+    fn queue_effect(
+        &mut self,
+        effect: QueueEffect,
+        inputs: &mut VecDeque<verbatim_model::Arrival>,
+    ) {
         match effect {
             QueueEffect::Send { to, ask } => match to.reader {
                 Reader::Listener => {

@@ -33,6 +33,7 @@ use crate::focus::menus::MenuCheck;
 use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
 use crate::keys::entry::{Fence, PressEntry};
+use crate::now::Now;
 use crate::state::SrState;
 use verbatim_model::class::by_class;
 use verbatim_model::request::CancelReason;
@@ -644,7 +645,12 @@ impl Logic for Entries {
         }
     }
 
-    fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Question>)>, entry: &mut Entry) {
+    fn arrival(
+        facts: &mut SrState,
+        front: Option<(&Entry, Option<&Question>)>,
+        entry: &mut Entry,
+        now: Now,
+    ) {
         // A UI Automation change or selection records whether its element
         // was on the focus line as it joined.
         match entry {
@@ -658,7 +664,7 @@ impl Logic for Entries {
             // it reaches the inbox, a held caret key's at its pass
             // (`docs/design/readers-tell-core-asks-build3.md`, "Keys and
             // ordering").
-            crate::keys::terminal::arrived(facts, press);
+            crate::keys::terminal::arrived(facts, press, now);
             // A held key's stroke joins the stroke line as its report
             // arrives, in the hook's order.
             if let PressAction::CaretKey {
@@ -692,12 +698,11 @@ impl Logic for Entries {
             .collect()
     }
 
-    fn ended_at_foreground(facts: &mut SrState, entry: &Entry, said: &mut Vec<Said>) {
+    fn ended_at_foreground(facts: &mut SrState, entry: &Entry, now: Now, said: &mut Vec<Said>) {
         // A held key ended so says nothing; its key passes, its stroke
         // sent in press order (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
         if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
-            let now_us = facts.terminal_focus.now_us;
-            said.extend(facts.strokes.pass(caret.key_seq, now_us).map(Said::Queue));
+            said.extend(facts.strokes.pass(caret.key_seq, now.us()).map(Said::Queue));
         }
     }
 
@@ -713,22 +718,21 @@ impl Logic for Entries {
 
     fn tick(
         facts: &mut SrState,
-        now_us: u64,
+        now: Now,
         foreground: Option<Foreground>,
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
-        said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
-        crate::keys::terminal::released(facts, now_us / 1_000);
-        said.extend(crate::desktop::tick(facts, now_us));
-        crate::input_desktop::tick(facts, now_us, foreground.as_ref())
+        said.extend(facts.strokes.release_due(now.us()).map(Said::Queue));
+        crate::keys::terminal::released(facts, now.ms(), now);
+        said.extend(crate::desktop::tick(facts, now.us()));
+        crate::input_desktop::tick(facts, now, foreground.as_ref())
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
             .collect()
     }
 
-    fn recovered(facts: &mut SrState, window: &RequestWindow) -> Option<Entry> {
-        let now_us = facts.terminal_focus.now_us;
-        crate::terminal::reading::recovered(facts, window, now_us);
+    fn recovered(facts: &mut SrState, window: &RequestWindow, now: Now) -> Option<Entry> {
+        crate::terminal::reading::recovered(facts, window, now);
         Some(Entry::CurrentFocus(Box::new(
             crate::focus::retake::recovered(facts, window),
         )))
@@ -741,8 +745,8 @@ impl Logic for Entries {
     fn facts_answered(
         facts: &mut SrState,
         token: u64,
-        outcome: Outcome<(verbatim_model::request::Reply, crate::event_queue::Stamps)>,
-        (now_us, _): (u64, Option<Foreground>),
+        outcome: Outcome<(verbatim_model::request::Reply, crate::event_queue::Ran)>,
+        (now, _): (Now, Option<Foreground>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let Some(bar) = crate::progress::ended(facts, token) {
@@ -751,7 +755,7 @@ impl Logic for Entries {
             return Vec::new();
         }
         let trace = facts.queue_trace.0;
-        crate::terminal::reading::answered(facts, token, outcome, (now_us, trace), said)
+        crate::terminal::reading::answered(facts, token, outcome, (now, trace), said)
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {
@@ -762,7 +766,7 @@ impl Logic for Entries {
     fn reader_ended(
         facts: &mut SrState,
         instance: Instance,
-        (foreground, retake): (Option<Foreground>, bool),
+        (foreground, retake, now): (Option<Foreground>, bool, Now),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
@@ -770,7 +774,7 @@ impl Logic for Entries {
             facts.follows.outpost_ended(process, outpost);
             // The focused terminal and the models of the generation's
             // terminals go with it.
-            said.extend(crate::terminal::reading::outpost_ended(facts, outpost));
+            said.extend(crate::terminal::reading::outpost_ended(facts, outpost, now));
             // Say-all's positions are anchors of the outpost's, which end
             // with it: say-all stops, its read withdrawn.
             said.extend(crate::say_all::outpost_ended(facts, outpost));
@@ -1126,7 +1130,7 @@ impl Routed {
 }
 
 /// Routes one queue input from the shell (`Input::Queue`) into the event
-/// queue under `trace_id` at `at_us`, and returns what Core did as the
+/// queue under `trace_id` at `now`, and returns what Core did as the
 /// shell's effects: requests, cancels, hang checks and the sound, what
 /// the entries' functions said, and the time Core next waits for; or, for
 /// the speech side's reports and Core's timers, the input each stands
@@ -1139,10 +1143,9 @@ impl Routed {
 pub(crate) fn route(
     state: &mut SrState,
     runtime: &mut Runtime,
-    (trace_id, at_us): (TraceId, u64),
+    (trace_id, now): (TraceId, Now),
     input: &QueueInput,
 ) -> Routed {
-    state.terminal_focus.now_us = at_us;
     let input = match input {
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::DesktopSwitch => {
             let Payload::DesktopSwitch { input_desktop_open } = tell.payload else {
@@ -1152,7 +1155,7 @@ pub(crate) fn route(
             return Routed::Said(desktop_switched(
                 state,
                 runtime,
-                (trace_id, at_us),
+                (trace_id, now),
                 input_desktop_open,
             ));
         }
@@ -1170,7 +1173,7 @@ pub(crate) fn route(
         // the change tell"): its read is sent as the queue settles.
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::TerminalChanged => {
             if let EventObject::Terminal { node, .. } = tell.object {
-                crate::terminal::reading::told(state, node, tell.at_us, at_us);
+                crate::terminal::reading::told(state, node, tell.at_us, now);
             }
             Input::Settle
         }
@@ -1232,7 +1235,7 @@ pub(crate) fn route(
             // brings ask by what Windows named in front as the shell made
             // it (Dickson, 2026-11-26).
             if let Some(in_front) = in_front {
-                crate::focus::menus::due(state, at_us, in_front);
+                crate::focus::menus::due(state, now.us(), in_front);
             }
             Input::Tick
         }
@@ -1271,7 +1274,7 @@ pub(crate) fn route(
             return Routed::Said(
                 state
                     .strokes
-                    .defer(*stroke, *pressed, at_us)
+                    .defer(*stroke, *pressed, now.us())
                     .map(Said::Queue)
                     .into_iter()
                     .collect(),
@@ -1302,16 +1305,15 @@ pub(crate) fn route(
             // past the cut, a terminal drops what waits, and say-all stops,
             // as NVDA's stops on any key.
             state.arrivals.speech_cut(*key);
-            let mut said = crate::terminal::cut(state, at_us / 1_000);
+            let mut said = crate::terminal::cut(state, crate::terminal::Cut::Key, now);
             said.extend(crate::say_all::stop(state));
             // A say-all stopped with its read out withdraws it.
-            said.extend(settle(state, runtime, trace_id));
+            said.extend(settle(state, runtime, (trace_id, now)));
             return Routed::Said(said);
         }
-        QueueInput::UtteranceCancelled { marks, at_ms } => {
+        QueueInput::UtteranceCancelled { marks } => {
             return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceCancelled {
                 marks: marks.clone(),
-                at_ms: *at_ms,
             }));
         }
         QueueInput::UtteranceFailed { marks } => {
@@ -1333,20 +1335,20 @@ pub(crate) fn route(
             }));
         }
     };
-    Routed::Said(run_input(state, runtime, (trace_id, at_us), input))
+    Routed::Said(run_input(state, runtime, (trace_id, now), input))
 }
 
-/// A switch of the input desktop at `at_us`, handled at once in the inbox
+/// A switch of the input desktop at `now`, handled at once in the inbox
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state"): what it says first, then its `Follow`s sent as Core's own
 /// requests, and the queue settled, so that a starting read whose stroke
 /// was dropped is withdrawn.
 fn desktop_switched(
     state: &mut SrState,
     runtime: &mut Runtime,
-    (trace_id, at_us): (TraceId, u64),
+    (trace_id, now): (TraceId, Now),
     open: bool,
 ) -> Vec<Said> {
-    let switched = crate::input_desktop::switched(state, open, at_us);
+    let switched = crate::input_desktop::switched(state, open, now);
     let requests = switched
         .follows
         .into_iter()
@@ -1356,16 +1358,16 @@ fn desktop_switched(
     said.extend(run_input(
         state,
         runtime,
-        (trace_id, at_us),
+        (trace_id, now),
         Input::Send(requests),
     ));
     said
 }
 
-/// Whether Core's facts, changed outside the queue, leave it to settle: a
-/// say-all wants its next read, or stopped while its read was out
+/// Whether Core's facts, changed outside the queue, leave it to settle at
+/// `now`: a say-all wants its next read, or stopped while its read was out
 /// ([`settle`]).
-pub(crate) fn unsettled(state: &SrState) -> bool {
+pub(crate) fn unsettled(state: &SrState, now: Now) -> bool {
     state.wants.any()
         || state
             .say_all
@@ -1373,29 +1375,32 @@ pub(crate) fn unsettled(state: &SrState) -> bool {
             .is_some_and(|say_all| say_all.run.read == crate::say_all::QueueRead::Wanted)
         || state
             .queue
-            .front_ends::<Entries>(state, Cause::Settled)
+            .front_ends::<Entries>(state, Cause::Settled, now)
             .is_some()
 }
 
-/// Settles the queue under `trace_id` after Core's facts changed outside
-/// it, as the speech side's cut or failure changes say-all until they
-/// reach the inbox: what they want joins the
-/// back, and a request no longer needed is withdrawn.
-pub(crate) fn settle(state: &mut SrState, runtime: &mut Runtime, trace_id: TraceId) -> Vec<Said> {
-    let at_us = state.queue.now_us();
-    run_input(state, runtime, (trace_id, at_us), Input::Settle)
+/// Settles the queue under `trace_id` at `now`, the time of the input
+/// that changed Core's facts outside it, as the speech side's cut or
+/// failure changes say-all until they reach the inbox: what they want
+/// joins the back, and a request no longer needed is withdrawn.
+pub(crate) fn settle(
+    state: &mut SrState,
+    runtime: &mut Runtime,
+    (trace_id, now): (TraceId, Now),
+) -> Vec<Said> {
+    run_input(state, runtime, (trace_id, now), Input::Settle)
 }
 
-/// Feeds `input` to the queue under `trace_id` at `at_us`, and returns
-/// what Core did as the shell's effects.
+/// Feeds `input` to the queue under `trace_id` at `now`, and returns what
+/// Core did as the shell's effects.
 fn run_input(
     state: &mut SrState,
     runtime: &mut Runtime,
-    (trace_id, at_us): (TraceId, u64),
+    (trace_id, now): (TraceId, Now),
     input: Input<Entry>,
 ) -> Vec<Said> {
     state.queue_trace = InputTrace(trace_id);
-    let effects = match feed(state, runtime, Timed { at_us, input }) {
+    let effects = match feed(state, runtime, Timed { now, input }) {
         Ok(effects) => effects,
         Err(mismatch) => {
             return vec![Said::Queue(QueueEffect::Mismatch {

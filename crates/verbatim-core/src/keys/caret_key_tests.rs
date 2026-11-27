@@ -200,7 +200,15 @@ pub(crate) fn depth_of(question: &verbatim_model::request::Question) -> &'static
 
 /// Feeds `input` at `at_us` and reads the step.
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
-    let effects = feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap();
+    let effects = feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap();
     let mut step = Step::default();
     for effect in effects {
         read_effect(&mut step, effect);
@@ -1289,7 +1297,7 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<Said> {
     crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), at_us),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(at_us)),
         input,
     )
     .said()
@@ -1883,7 +1891,7 @@ fn enter_dropped_at_a_desktop_switch_applies_nothing() {
     let said = crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), 3_000),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(3_000)),
         &switched_away(),
     )
     .said();
@@ -1925,7 +1933,7 @@ fn backspace_dropped_during_its_starting_read_keeps_the_word_and_forgets_its_mar
     let _ = crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), 3_000),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(3_000)),
         &switched_away(),
     );
     assert_eq!(held.state.oldest_key_entry(), None);

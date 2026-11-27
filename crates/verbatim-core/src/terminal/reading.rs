@@ -25,8 +25,9 @@ use verbatim_model::{Effect, NodeId, Role, TerminalScope, TextAnchor, TextFailur
 
 use crate::batch::Answers;
 use crate::entries::{Entries, Entry};
-use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow, Stamps};
+use crate::event_queue::{Cx, Outcome, Ran, Reader, Request, RequestWindow};
 use crate::keys::entry::Fence;
+use crate::now::Now;
 use crate::state::SrState;
 use crate::terminal::reader::{self, WindowAsk, WindowRead, WindowReply};
 use crate::terminal::{Said, SaidItem, TerminalItem};
@@ -137,9 +138,6 @@ pub(crate) struct TerminalFocus {
     /// Whether an entry's full read of the focused terminal is out (a
     /// caret key's or a review command's).
     entry_read: bool,
-    /// The time of the queue input being handled, in microseconds on the
-    /// shared clock, at which the flood policy's requests are sent.
-    pub(crate) now_us: u64,
     /// Keys pressed behind a held key's stroke, which reach the program at
     /// its pass, each with when the hook saw it, in milliseconds, its trace
     /// and its number (`crate::keys::terminal`).
@@ -204,9 +202,9 @@ fn release_spoken(state: &mut SrState, token: u64) -> bool {
 /// read's answer, `pending` whether a release read was pending before: a
 /// release it dropped ends, and the look at the backlog waiting for it
 /// runs, as when the release read finds the terminal gone.
-fn release_dropped(state: &mut SrState, pending: bool) -> Vec<Effect> {
+fn release_dropped(state: &mut SrState, pending: bool, now: Now) -> Vec<Effect> {
     if pending && !release_pending(state) {
-        return crate::terminal::release_settled(state);
+        return crate::terminal::release_settled(state, now);
     }
     Vec::new()
 }
@@ -270,7 +268,7 @@ fn want_follow(state: &mut SrState, terminal: &Terminal, resent: bool) -> Follow
     FollowOut { token, resent }
 }
 
-/// The full read of `terminal` Core sends now, at `now_us`, with the facts
+/// The full read of `terminal` Core sends now, at `now`, with the facts
 /// of its model: the start it names, the scope the rules owe, the screen's
 /// height and whether it takes the colours; a first read with none of
 /// them before the terminal is modelled. The model counts it sent, and
@@ -279,7 +277,7 @@ fn full_read(
     state: &mut SrState,
     terminal: &Terminal,
     (starting, output): (bool, bool),
-    now_us: u64,
+    now: Now,
 ) -> WindowAsk {
     // A read that names no start and knows the screen's height takes its
     // history block, a screen above the next read's start; with no height
@@ -297,7 +295,7 @@ fn full_read(
             output,
         };
     };
-    let colours = model.takes_colours(now_us / 1_000);
+    let colours = model.takes_colours(now.ms());
     let scope = model.owed.take().unwrap_or(TerminalScope::Fresh);
     model.sends = model.sends.saturating_add(1);
     let read = match (scope, model.start) {
@@ -329,9 +327,9 @@ fn want_output(
     state: &mut SrState,
     terminal: &Terminal,
     (mark, again): (Mark, Option<u64>),
-    now_us: u64,
+    now: Now,
 ) -> Reading {
-    let ask = full_read(state, terminal, (false, true), now_us);
+    let ask = full_read(state, terminal, (false, true), now);
     let token = token(state);
     want_read(state, token, terminal, &ask);
     Reading::Out {
@@ -344,15 +342,15 @@ fn want_output(
 
 /// Wants the baseline of `terminal`, a full read in `Follow`'s order
 /// class, and returns its token with what it asked.
-fn want_baseline(state: &mut SrState, terminal: &Terminal, now_us: u64) -> (u64, WindowAsk) {
-    let ask = full_read(state, terminal, (false, false), now_us);
+fn want_baseline(state: &mut SrState, terminal: &Terminal, now: Now) -> (u64, WindowAsk) {
+    let ask = full_read(state, terminal, (false, false), now);
     let token = token(state);
     want_read(state, token, terminal, &ask);
     (token, ask)
 }
 
 /// The committed focus changed (Table 1, columns A and H): `to` is the
-/// terminal now committed, if the new focus is one, at `now_us`. A
+/// terminal now committed, if the new focus is one, at `now`. A
 /// terminal committed, new or taken again, is baselining: its `Follow` and
 /// baseline are wanted, the `Follow` among `follows`, the commit's, which
 /// are all wanted in order first; a terminal left is told so. A release
@@ -362,7 +360,7 @@ pub(crate) fn committed(
     state: &mut SrState,
     to: Option<Terminal>,
     follows: Vec<(RequestWindow, Option<Followed>)>,
-    (now_us, cut): (u64, bool),
+    (now, cut): (Now, bool),
 ) -> Vec<Effect> {
     let pending = release_pending(state);
     let from = focused(state);
@@ -377,7 +375,7 @@ pub(crate) fn committed(
             want_followed(state, None, window, node.as_ref());
         }
         state.terminal_focus.focused = FocusedTerminal::None;
-        return release_dropped(state, pending && !cut);
+        return release_dropped(state, pending && !cut, now);
     };
     let mut follow = None;
     for (window, node) in follows {
@@ -394,16 +392,16 @@ pub(crate) fn committed(
         want_followed(state, token, window, node.as_ref());
     }
     if let Some(model) = terminal_model::model_mut(state, terminal.node) {
-        model.focused(now_us / 1_000);
+        model.focused();
     }
-    let read = want_baseline(state, &terminal, now_us);
+    let read = want_baseline(state, &terminal, now);
     state.terminal_focus.focused = FocusedTerminal::Baselining {
         terminal,
         follow,
         read: Some(read),
         told: None,
     };
-    release_dropped(state, pending && !cut)
+    release_dropped(state, pending && !cut, now)
 }
 
 /// The terminal a focus of `role` read on `window`, `node`, is, when it is
@@ -422,9 +420,9 @@ pub(crate) fn terminal_of(
 }
 
 /// A change of terminal `node` observed at `at_us`, told at once in the
-/// inbox at `now_us` (Table 1, column D; Table 2, column A); a tell for
+/// inbox at `now` (Table 1, column D; Table 2, column A); a tell for
 /// any other node is dropped.
-pub(crate) fn told(state: &mut SrState, node: NodeId, at_us: u64, now_us: u64) {
+pub(crate) fn told(state: &mut SrState, node: NodeId, at_us: u64, now: Now) {
     let focused = state.terminal_focus.focused;
     let changed = match focused {
         FocusedTerminal::Baselining {
@@ -433,7 +431,7 @@ pub(crate) fn told(state: &mut SrState, node: NodeId, at_us: u64, now_us: u64) {
             read,
             ..
         } if terminal.node == node => {
-            let read = read.or_else(|| Some(want_baseline(state, &terminal, now_us)));
+            let read = read.or_else(|| Some(want_baseline(state, &terminal, now)));
             FocusedTerminal::Baselining {
                 terminal,
                 follow,
@@ -454,7 +452,7 @@ pub(crate) fn told(state: &mut SrState, node: NodeId, at_us: u64, now_us: u64) {
         } if terminal.node == node => FocusedTerminal::Modelled {
             terminal,
             follow,
-            reading: reading_told(state, &terminal, reading, (at_us, now_us)),
+            reading: reading_told(state, &terminal, reading, (at_us, now)),
         },
         _ => return,
     };
@@ -466,7 +464,7 @@ fn reading_told(
     state: &mut SrState,
     terminal: &Terminal,
     reading: Reading,
-    (at_us, now_us): (u64, u64),
+    (at_us, now): (u64, Now),
 ) -> Reading {
     match reading {
         Reading::Quiet => {
@@ -477,7 +475,7 @@ fn reading_told(
             } else if state.terminal_focus.entry_read {
                 Reading::Behind { told: at_us }
             } else {
-                want_output(state, terminal, (Mark::Spoken, None), now_us)
+                want_output(state, terminal, (Mark::Spoken, None), now)
             }
         }
         Reading::Behind { told } => Reading::Behind {
@@ -512,14 +510,14 @@ fn uncovered(told: Option<u64>, started_us: u64) -> Option<u64> {
 
 /// After a read is taken, with nothing out: the reading the scope the
 /// rules owe, or the colours owed, asks (Table 2, column L).
-fn owed_read(state: &mut SrState, terminal: &Terminal, reading: Reading, now_us: u64) -> Reading {
+fn owed_read(state: &mut SrState, terminal: &Terminal, reading: Reading, now: Now) -> Reading {
     if reading != Reading::Quiet {
         return reading;
     }
     let owed = terminal_model::model_of(state, terminal.node)
         .is_some_and(|model| model.owed.is_some() || model.colours_owed());
     if owed {
-        want_output(state, terminal, (Mark::Spoken, None), now_us)
+        want_output(state, terminal, (Mark::Spoken, None), now)
     } else {
         reading
     }
@@ -527,14 +525,14 @@ fn owed_read(state: &mut SrState, terminal: &Terminal, reading: Reading, now_us:
 
 /// A key Core took in for the focused terminal: its colours may be owed
 /// now (Table 2, column L).
-pub(crate) fn key_taken(state: &mut SrState, now_us: u64) {
+pub(crate) fn key_taken(state: &mut SrState, now: Now) {
     if let FocusedTerminal::Modelled {
         terminal,
         follow,
         reading,
     } = state.terminal_focus.focused
     {
-        let reading = owed_read(state, &terminal, reading, now_us);
+        let reading = owed_read(state, &terminal, reading, now);
         state.terminal_focus.focused = FocusedTerminal::Modelled {
             terminal,
             follow,
@@ -618,10 +616,10 @@ fn speech_entry(
 /// answers to keys are spoken and the output goes through the flood
 /// policy, unless silent or read before the last cut; otherwise it ends
 /// silent.
-pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
+pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry, now: Now) -> Vec<Effect> {
     let release = |state: &mut SrState| match entry.of {
         Of::Output { token } if release_spoken(state, token) => {
-            crate::terminal::release_settled(state)
+            crate::terminal::release_settled(state, now)
         }
         Of::Read | Of::Output { .. } => Vec::new(),
     };
@@ -642,8 +640,8 @@ pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
             stamp_of(entry.fence, entry.key).key(),
         ),
         (entry.node, entry.started_ms),
-        said,
-        entry.silent,
+        (said, entry.silent),
+        now,
     );
     effects.extend(release(state));
     terminal_model::under(entry.key.trace, effects)
@@ -661,7 +659,8 @@ fn stamp_of(turn: Fence, key: terminal_model::SpeechKey) -> Fence {
 /// keys, the lines the flood policy hands on, and those a release hands on.
 fn emit_speech(cx: &mut Cx<Entries>, turn: Fence, entry: SpeechEntry) {
     let fence = stamp_of(turn, entry.key);
-    let effects = speak(&mut cx.facts_mut(), entry);
+    let now = cx.now();
+    let effects = speak(&mut cx.facts_mut(), entry, now);
     for mut effect in effects {
         crate::keys::entry::stamp(fence, &mut effect);
         cx.emit_stamped(effect);
@@ -693,8 +692,13 @@ pub(crate) fn observed(terminal: &Terminal, reply: &WindowReply, trace: TraceId)
 fn read_of(
     node: NodeId,
     ask: &WindowAsk,
-    (reply, ran): (Reply, Stamps),
+    (reply, ran): (Reply, Ran),
 ) -> Option<Result<WindowReply, TextFailure>> {
+    // A terminal's read is always its outpost's worker's: Core's plain
+    // reader answers none, so a result with no run does not decode.
+    let Ran::Worker(ran) = ran else {
+        return None;
+    };
     let (sent, steps) = reader::window_batch(node, ask);
     let answers = Answers::parse(&sent, reply)?;
     Some(reader::window_of(
@@ -713,7 +717,7 @@ fn read_of(
 fn decoded(
     terminal: &Terminal,
     ask: &WindowAsk,
-    outcome: Outcome<(Reply, Stamps)>,
+    outcome: Outcome<(Reply, Ran)>,
 ) -> Outcome<Option<WindowReply>> {
     match outcome.split() {
         Ok(answer) => match read_of(terminal.node, ask, answer) {
@@ -728,7 +732,7 @@ fn decoded(
 }
 
 /// A request Core's terminal reading asked under `token` ended with
-/// `outcome`, a result with when its reader's worker ran it, at `now_us`:
+/// `outcome`, a result with when its reader's worker ran it, at `now`:
 /// the `Follow`, the baseline or the output read it is (Tables 1 and 2);
 /// one the focused terminal no longer awaits is dropped. The speech
 /// entries returned join the back; what the flood policy says goes into
@@ -736,8 +740,8 @@ fn decoded(
 pub(crate) fn answered(
     state: &mut SrState,
     token: u64,
-    outcome: Outcome<(Reply, Stamps)>,
-    (now_us, trace): (u64, TraceId),
+    outcome: Outcome<(Reply, Ran)>,
+    (now, trace): (Now, TraceId),
     said: &mut Vec<Effect>,
 ) -> Vec<Entry> {
     let focused = state.terminal_focus.focused;
@@ -752,7 +756,7 @@ pub(crate) fn answered(
     };
     if follow.is_some_and(|follow| follow.token == token) {
         let outcome = outcome.map(|(reply, _)| reply);
-        said.extend(follow_ended(state, &terminal, follow, &outcome, now_us));
+        said.extend(follow_ended(state, &terminal, follow, &outcome, now));
         return Vec::new();
     }
     let ask = match focused {
@@ -774,7 +778,7 @@ pub(crate) fn answered(
     }
     match focused {
         FocusedTerminal::Baselining { told, .. } => {
-            baseline_ended(state, &terminal, (follow, told), outcome, (now_us, trace))
+            baseline_ended(state, &terminal, (follow, told), outcome, (now, trace))
         }
         FocusedTerminal::Modelled {
             reading: Reading::Out { mark, again, .. },
@@ -784,7 +788,7 @@ pub(crate) fn answered(
             (&terminal, follow),
             (token, mark, ask.start(), again),
             outcome,
-            (now_us, trace),
+            (now, trace),
             said,
         ),
         _ => Vec::new(),
@@ -797,7 +801,7 @@ fn follow_ended(
     terminal: &Terminal,
     follow: Option<FollowOut>,
     outcome: &Outcome<Reply>,
-    now_us: u64,
+    now: Now,
 ) -> Vec<Effect> {
     let pending = release_pending(state);
     let focused = state.terminal_focus.focused;
@@ -818,7 +822,7 @@ fn follow_ended(
             let follow = Some(want_follow(state, terminal, true));
             match focused {
                 FocusedTerminal::Baselining { read, told, .. } => {
-                    let read = read.or_else(|| Some(want_baseline(state, terminal, now_us)));
+                    let read = read.or_else(|| Some(want_baseline(state, terminal, now)));
                     FocusedTerminal::Baselining {
                         terminal: *terminal,
                         follow,
@@ -846,7 +850,7 @@ fn follow_ended(
         }
     };
     state.terminal_focus.focused = next;
-    release_dropped(state, pending)
+    release_dropped(state, pending, now)
 }
 
 /// `focused` with no `Follow` out.
@@ -880,7 +884,7 @@ fn baseline_ended(
     terminal: &Terminal,
     (follow, told): (Option<FollowOut>, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
-    (now_us, trace): (u64, TraceId),
+    (now, trace): (Now, TraceId),
 ) -> Vec<Entry> {
     let reply = match outcome {
         Outcome::Result(reply) => reply,
@@ -912,7 +916,7 @@ fn baseline_ended(
         terminal,
         (follow, told),
         (&reply, None),
-        (now_us, trace),
+        (now, trace),
     )
     .into_iter()
     .map(|entry| Entry::TerminalSpeech(Box::new(entry)))
@@ -927,7 +931,7 @@ fn modelled_by(
     terminal: &Terminal,
     (follow, told): (Option<FollowOut>, Option<u64>),
     (reply, named): (&WindowReply, Option<TextAnchor>),
-    (now_us, trace): (u64, TraceId),
+    (now, trace): (Now, TraceId),
 ) -> Option<SpeechEntry> {
     let taken = terminal_model::take(state, terminal.node, reply, (named, false));
     let entry = speech_entry(
@@ -937,8 +941,8 @@ fn modelled_by(
         trace,
     );
     let reading = match uncovered(told, reply.started_us) {
-        Some(_) => want_output(state, terminal, (Mark::Spoken, None), now_us),
-        None => owed_read(state, terminal, Reading::Quiet, now_us),
+        Some(_) => want_output(state, terminal, (Mark::Spoken, None), now),
+        None => owed_read(state, terminal, Reading::Quiet, now),
     };
     state.terminal_focus.focused = FocusedTerminal::Modelled {
         terminal: *terminal,
@@ -954,7 +958,7 @@ fn output_ended(
     (terminal, follow): (&Terminal, Option<FollowOut>),
     (read, mark, named, again): (u64, Mark, Option<TextAnchor>, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
-    (now_us, trace): (u64, TraceId),
+    (now, trace): (Now, TraceId),
     said: &mut Vec<Effect>,
 ) -> Vec<Entry> {
     let release = mark == (Mark::Waited { release: true });
@@ -971,20 +975,20 @@ fn output_ended(
             state.terminal_focus.focused = FocusedTerminal::None;
             state.drop_models(|model| model.node == terminal.node);
             if release {
-                said.extend(crate::terminal::release_settled(state));
+                said.extend(crate::terminal::release_settled(state, now));
             }
             return Vec::new();
         }
         Outcome::NoLongerAwaited(CancelReason::DueTime) => {
             // One read sent again with the same mark (column D).
-            let reading = want_output(state, terminal, (mark, again), now_us);
+            let reading = want_output(state, terminal, (mark, again), now);
             set(state, reading);
             return Vec::new();
         }
         Outcome::NotResponding | Outcome::NoLongerAwaited(CancelReason::Hung) => {
             set(state, Reading::Stalled { holding: release });
             if release {
-                said.extend(crate::terminal::release_settled(state));
+                said.extend(crate::terminal::release_settled(state, now));
             }
             return Vec::new();
         }
@@ -997,10 +1001,10 @@ fn output_ended(
         // it was out.
         if release {
             set(state, Reading::Holding { told: again });
-            said.extend(crate::terminal::release_settled(state));
+            said.extend(crate::terminal::release_settled(state, now));
         } else {
             let reading = match again {
-                Some(_) => want_output(state, terminal, (Mark::Spoken, None), now_us),
+                Some(_) => want_output(state, terminal, (Mark::Spoken, None), now),
                 None => Reading::Quiet,
             };
             set(state, reading);
@@ -1014,7 +1018,7 @@ fn output_ended(
         (terminal, follow),
         (read, mark, again),
         (taken, (reply.snapshot.started_ms, reply.started_us)),
-        (now_us, trace),
+        (now, trace),
     )
 }
 
@@ -1026,7 +1030,7 @@ fn output_taken(
     (terminal, follow): (&Terminal, Option<FollowOut>),
     (read, mark, again): (u64, Mark, Option<u64>),
     (taken, began): (Taken, (u64, u64)),
-    (now_us, trace): (u64, TraceId),
+    (now, trace): (Now, TraceId),
 ) -> Vec<Entry> {
     let release = mark == (Mark::Waited { release: true });
     let set = |state: &mut SrState, reading: Reading| {
@@ -1046,7 +1050,7 @@ fn output_taken(
         terminal_model::model_of(state, terminal.node).is_some_and(|model| model.owed.is_some());
     let again = uncovered(again, began.1);
     let reading = if owed_scope {
-        want_output(state, terminal, (mark, again), now_us)
+        want_output(state, terminal, (mark, again), now)
     } else if release {
         // The backlog look runs at the speech entry's turn.
         Reading::Releasing {
@@ -1056,9 +1060,9 @@ fn output_taken(
     } else if crate::terminal::lines_hold(state) {
         Reading::Holding { told: again }
     } else if again.is_some() {
-        want_output(state, terminal, (Mark::Spoken, None), now_us)
+        want_output(state, terminal, (Mark::Spoken, None), now)
     } else {
-        owed_read(state, terminal, Reading::Quiet, now_us)
+        owed_read(state, terminal, Reading::Quiet, now)
     };
     set(state, reading);
     entry
@@ -1091,19 +1095,18 @@ pub(crate) fn lines_full(state: &mut SrState) {
 
 /// A group's last line was handed to speech (Table 2, column H): a
 /// holding terminal with a change told is read, the release.
-pub(crate) fn group_last_line(state: &mut SrState) {
+pub(crate) fn group_last_line(state: &mut SrState, now: Now) {
     if let FocusedTerminal::Modelled {
         terminal,
         follow,
         reading: Reading::Holding { told: Some(_) },
     } = state.terminal_focus.focused
     {
-        let now_us = state.terminal_focus.now_us;
         let reading = want_output(
             state,
             &terminal,
             (Mark::Waited { release: true }, None),
-            now_us,
+            now,
         );
         state.terminal_focus.focused = FocusedTerminal::Modelled {
             terminal,
@@ -1116,7 +1119,7 @@ pub(crate) fn group_last_line(state: &mut SrState) {
 /// The backlog was looked at (Table 2, column I), `nothing_waits` when no
 /// line waits after it: a holding terminal goes live, a change told read
 /// at once as a waited read.
-pub(crate) fn looked(state: &mut SrState, nothing_waits: bool) {
+pub(crate) fn looked(state: &mut SrState, nothing_waits: bool, now: Now) {
     if !nothing_waits {
         return;
     }
@@ -1126,15 +1129,14 @@ pub(crate) fn looked(state: &mut SrState, nothing_waits: bool) {
         reading: Reading::Holding { told },
     } = state.terminal_focus.focused
     {
-        let now_us = state.terminal_focus.now_us;
         let reading = match told {
             Some(_) => want_output(
                 state,
                 &terminal,
                 (Mark::Waited { release: false }, None),
-                now_us,
+                now,
             ),
-            None => owed_read(state, &terminal, Reading::Quiet, now_us),
+            None => owed_read(state, &terminal, Reading::Quiet, now),
         };
         state.terminal_focus.focused = FocusedTerminal::Modelled {
             terminal,
@@ -1147,7 +1149,7 @@ pub(crate) fn looked(state: &mut SrState, nothing_waits: bool) {
 /// A cut (Table 2, column J): changes held unread are read at once by a
 /// silent read, and the policy goes live; a release read out becomes
 /// silent.
-pub(crate) fn cut(state: &mut SrState) {
+pub(crate) fn cut(state: &mut SrState, now: Now) {
     let FocusedTerminal::Modelled {
         terminal,
         follow,
@@ -1169,8 +1171,7 @@ pub(crate) fn cut(state: &mut SrState) {
             again,
         },
         Reading::Holding { told: Some(_) } | Reading::Releasing { told: Some(_), .. } => {
-            let now_us = state.terminal_focus.now_us;
-            want_output(state, &terminal, (Mark::Silent, None), now_us)
+            want_output(state, &terminal, (Mark::Silent, None), now)
         }
         Reading::Holding { told: None } | Reading::Releasing { told: None, .. } => Reading::Quiet,
         Reading::Stalled { .. } => Reading::Stalled { holding: false },
@@ -1183,10 +1184,10 @@ pub(crate) fn cut(state: &mut SrState) {
     };
 }
 
-/// A window in the recovery set, `window`, answers again at `now_us`
+/// A window in the recovery set, `window`, answers again at `now`
 /// (Table 1, column J; Table 2, column K): the focused terminal in it is
 /// followed and read again.
-pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64) {
+pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now: Now) {
     let focused = state.terminal_focus.focused;
     let Some(terminal) = focused
         .terminal()
@@ -1200,11 +1201,11 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
         FocusedTerminal::Baselining { read, told, .. } => FocusedTerminal::Baselining {
             terminal,
             follow,
-            read: read.or_else(|| Some(want_baseline(state, &terminal, now_us))),
+            read: read.or_else(|| Some(want_baseline(state, &terminal, now))),
             told,
         },
         FocusedTerminal::WaitingForWindow { told, .. } => {
-            let read = Some(want_baseline(state, &terminal, now_us));
+            let read = Some(want_baseline(state, &terminal, now));
             FocusedTerminal::Baselining {
                 terminal,
                 follow,
@@ -1220,26 +1221,26 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
                 Reading::Quiet | Reading::Stalled { holding: false }
                     if state.terminal_focus.entry_read =>
                 {
-                    Reading::Behind { told: now_us }
+                    Reading::Behind { told: now.us() }
                 }
                 Reading::Quiet | Reading::Stalled { holding: false } => {
-                    want_output(state, &terminal, (Mark::Spoken, None), now_us)
+                    want_output(state, &terminal, (Mark::Spoken, None), now)
                 }
-                Reading::Behind { .. } => Reading::Behind { told: now_us },
+                Reading::Behind { .. } => Reading::Behind { told: now.us() },
                 Reading::Out {
                     token, mark, ask, ..
                 } => Reading::Out {
                     token,
                     mark,
                     ask,
-                    again: Some(now_us),
+                    again: Some(now.us()),
                 },
-                Reading::Holding { .. } | Reading::Stalled { holding: true } => {
-                    Reading::Holding { told: Some(now_us) }
-                }
+                Reading::Holding { .. } | Reading::Stalled { holding: true } => Reading::Holding {
+                    told: Some(now.us()),
+                },
                 Reading::Releasing { token, .. } => Reading::Releasing {
                     token,
-                    told: Some(now_us),
+                    told: Some(now.us()),
                 },
             };
             FocusedTerminal::Modelled {
@@ -1257,6 +1258,7 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
 pub(crate) fn outpost_ended(
     state: &mut SrState,
     outpost: verbatim_model::OutpostId,
+    now: Now,
 ) -> Vec<Effect> {
     let pending = release_pending(state);
     if focused(state).is_some_and(|terminal| terminal.node.outpost() == Some(outpost)) {
@@ -1264,7 +1266,7 @@ pub(crate) fn outpost_ended(
         state.terminal_focus.entry_read = false;
     }
     terminal_model::outpost_ended(state, outpost);
-    release_dropped(state, pending)
+    release_dropped(state, pending, now)
 }
 
 /// A full read of the focused terminal an entry asks inside the queue: a
@@ -1294,19 +1296,19 @@ impl Request for EntryRead {
             .question()
     }
 
-    fn decode(&self, reply: Reply, ran: Stamps) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply, ran: Ran) -> Option<Self::Reply> {
         read_of(self.terminal.node, &self.ask, (reply, ran)).map(|read| read.map(Box::new))
     }
 }
 
-/// The full read of terminal `node` an entry asks now, at `now_us`,
+/// The full read of terminal `node` an entry asks now, at `now`,
 /// `starting` for a caret key's starting read: `None` when `node` is not
 /// the focused terminal, baselining or modelled.
 pub(crate) fn entry_read(
     state: &mut SrState,
     node: NodeId,
     starting: bool,
-    now_us: u64,
+    now: Now,
 ) -> Option<EntryRead> {
     let terminal = match state.terminal_focus.focused {
         FocusedTerminal::Baselining { terminal, .. }
@@ -1317,12 +1319,12 @@ pub(crate) fn entry_read(
         }
         _ => return None,
     };
-    let ask = full_read(state, &terminal, (starting, false), now_us);
+    let ask = full_read(state, &terminal, (starting, false), now);
     state.terminal_focus.entry_read = true;
     Some(EntryRead { terminal, ask })
 }
 
-/// An entry's full read `asked` ended with `outcome` at `now_us` (Table 1,
+/// An entry's full read `asked` ended with `outcome` at `now` (Table 1,
 /// column G; Table 2, column F): a result is taken by the model and its
 /// speech returned, for the entry to speak after the terminal's speech
 /// entries waiting ahead of it; a read ended otherwise reads a change told
@@ -1331,7 +1333,7 @@ pub(crate) fn entry_read_ended(
     state: &mut SrState,
     asked: &EntryRead,
     outcome: Option<&WindowReply>,
-    (now_us, trace): (u64, TraceId),
+    (now, trace): (Now, TraceId),
 ) -> Option<SpeechEntry> {
     state.terminal_focus.entry_read = false;
     let node = asked.terminal.node;
@@ -1343,7 +1345,7 @@ pub(crate) fn entry_read_ended(
         } = state.terminal_focus.focused
             && terminal.node == node
         {
-            let reading = want_output(state, &terminal, (Mark::Spoken, None), now_us);
+            let reading = want_output(state, &terminal, (Mark::Spoken, None), now);
             state.terminal_focus.focused = FocusedTerminal::Modelled {
                 terminal,
                 follow,
@@ -1364,7 +1366,7 @@ pub(crate) fn entry_read_ended(
             &terminal,
             (follow, told),
             (reply, named),
-            (now_us, trace),
+            (now, trace),
         ),
         FocusedTerminal::Baselining { terminal, .. } if terminal.node == node => {
             // The baseline answers first, in the worker's order; a read
@@ -1387,7 +1389,7 @@ pub(crate) fn entry_read_ended(
                 &terminal,
                 (follow, told),
                 (reply, named),
-                (now_us, trace),
+                (now, trace),
             )
         }
         FocusedTerminal::Modelled {
@@ -1405,8 +1407,8 @@ pub(crate) fn entry_read_ended(
             let started_us = reply.started_us;
             let reading = match reading {
                 Reading::Behind { told } => match uncovered(Some(told), started_us) {
-                    Some(_) => want_output(state, &terminal, (Mark::Spoken, None), now_us),
-                    None => owed_read(state, &terminal, Reading::Quiet, now_us),
+                    Some(_) => want_output(state, &terminal, (Mark::Spoken, None), now),
+                    None => owed_read(state, &terminal, Reading::Quiet, now),
                 },
                 Reading::Out {
                     token,
@@ -1426,7 +1428,7 @@ pub(crate) fn entry_read_ended(
                     token,
                     told: uncovered(told, started_us),
                 },
-                Reading::Quiet => owed_read(state, &terminal, Reading::Quiet, now_us),
+                Reading::Quiet => owed_read(state, &terminal, Reading::Quiet, now),
                 Reading::Stalled { holding } => Reading::Stalled { holding },
             };
             state.terminal_focus.focused = FocusedTerminal::Modelled {
@@ -1491,7 +1493,7 @@ pub(crate) fn answered_with(
     state: &mut SrState,
     token: u64,
     speech: Said,
-    started_us: u64,
+    (started_us, now): (u64, Now),
 ) -> Option<SpeechEntry> {
     let FocusedTerminal::Modelled {
         terminal,
@@ -1516,13 +1518,12 @@ pub(crate) fn answered_with(
         key: terminal_model::SpeechKey::default(),
         generation,
     };
-    let at_us = state.terminal_focus.now_us;
     output_taken(
         state,
         (&terminal, follow),
         (token, mark, again),
         (read, (started_us / 1_000, started_us)),
-        (at_us, TraceId::from_raw(5)),
+        (now, TraceId::from_raw(5)),
     )
     .into_iter()
     .find_map(|entry| match entry {

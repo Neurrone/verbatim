@@ -73,7 +73,7 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
     crate::entries::route(
         &mut held.state,
         &mut held.runtime,
-        (TraceId::from_raw(1), at_us),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(at_us)),
         input,
     )
     .said()

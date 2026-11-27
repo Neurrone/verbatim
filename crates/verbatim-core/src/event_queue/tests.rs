@@ -130,7 +130,7 @@ impl Request for ReadName {
         wire()
     }
 
-    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply, _: super::Ran) -> Option<PropertyValues> {
         values_of(reply)
     }
 }
@@ -154,7 +154,7 @@ impl Request for ReadPlain {
         plain_wire()
     }
 
-    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply, _: super::Ran) -> Option<PropertyValues> {
         values_of(reply)
     }
 }
@@ -309,7 +309,7 @@ impl Logic for Test {
         }
     }
 
-    fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
+    fn recovered(_: &mut u32, window: &RequestWindow, _: crate::now::Now) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
     }
 
@@ -428,7 +428,10 @@ fn ask_outside() -> Input<Entry> {
 
 /// Feeds `input` at `at_us`.
 fn feed(core: &mut Core<Test>, at_us: u64, input: Input<Entry>) -> Vec<Effect> {
-    core.feed(Timed { at_us, input })
+    core.feed(Timed {
+        now: crate::now::Now::from_raw(at_us),
+        input,
+    })
 }
 
 /// `instance` made ready at `at_us`: its start set up as the owner thread
@@ -438,7 +441,7 @@ fn ready_at(core: &mut Core<Test>, at_us: u64, instance: Instance) -> Vec<Effect
         .borrow_mut()
         .state
         .queue
-        .start_for_tests(instance);
+        .start_for_tests(instance, at_us);
     feed(core, at_us, Input::ReaderReady(instance))
 }
 
@@ -1496,6 +1499,8 @@ fn an_ask_let_go_after_it_was_made_is_counted() {
         answers: Vec::new(),
         asked: None,
     });
+    // Asked by hand as a function asks inside a step, at its time.
+    core.shared.borrow_mut().now = crate::now::Now::from_raw(1_000);
     let mut cx = core.cx_for_tests();
     let mut asking = cx.ask(ReadName, FOCUS_DUE_US);
     let polled = Pin::new(&mut asking).poll(&mut Context::from_waker(Waker::noop()));
@@ -1536,7 +1541,10 @@ fn every_entry_ends_with_each_of_its_requests_answered_once() {
 /// A scenario touching every path: a chain, an outside request, a key
 /// withdrawing, a hang and its recovery, a due time and a late answer.
 fn scenario() -> Vec<Timed<Entry>> {
-    let at = |at_us, input| Timed { at_us, input };
+    let at = |at_us, input| Timed {
+        now: crate::now::Now::from_raw(at_us),
+        input,
+    };
     vec![
         at(0, Input::ReaderReady(OUTPOST)),
         at(0, Input::Foreground(IN_FRONT)),
@@ -1615,7 +1623,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
     assert_eq!(
         core.dump(),
         concat!(
-            "Core { now_us: 3100, ",
+            "Core { ",
             "front: Some(Front { entry: Read { reads: 2, exempt: false }, ",
             "answers: [Result(PropertyValues([]))], asked: Some(RequestNumber(3)) }), ",
             "waiting: [One(Read { reads: 1, exempt: false })], timers: [], ",
@@ -1665,8 +1673,8 @@ impl Request for ReadProbed {
         wire()
     }
 
-    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
-        ReadName.decode(reply, super::Stamps::default())
+    fn decode(&self, reply: Reply, _: super::Ran) -> Option<PropertyValues> {
+        ReadName.decode(reply, super::Ran::NoWorker)
     }
 }
 
@@ -1704,7 +1712,7 @@ impl Logic for Probing {
         }
     }
 
-    fn recovered((): &mut (), _: &RequestWindow) -> Option<Withdraws> {
+    fn recovered((): &mut (), _: &RequestWindow, _: crate::now::Now) -> Option<Withdraws> {
         None
     }
 
@@ -1767,13 +1775,13 @@ fn probing_core() -> Core<Probing> {
         .borrow_mut()
         .state
         .queue
-        .start_for_tests(OUTPOST);
+        .start_for_tests(OUTPOST, 0);
     let _ = core.feed(Timed {
-        at_us: 0,
+        now: crate::now::Now::from_raw(0),
         input: Input::ReaderReady(OUTPOST),
     });
     let _ = core.feed(Timed {
-        at_us: 0,
+        now: crate::now::Now::from_raw(0),
         input: Input::Foreground(IN_FRONT),
     });
     core
@@ -1781,7 +1789,10 @@ fn probing_core() -> Core<Probing> {
 
 /// Feeds `input` to a probe test's core at `at_us`.
 fn feed_probing(core: &mut Core<Probing>, at_us: u64, input: Input<Withdraws>) -> Vec<Effect> {
-    core.feed(Timed { at_us, input })
+    core.feed(Timed {
+        now: crate::now::Now::from_raw(at_us),
+        input,
+    })
 }
 
 /// The answer to request `number` with `probes`.

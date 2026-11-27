@@ -12,9 +12,18 @@ in its rustdoc (`cargo doc -p verbatim-core --no-deps --open`).
   whoever runs the reducer and never cloned or written to a dump; a new
   one, as after a clone or a restored dump, rebuilds the function from the
   state's checkpoint before the next input.
-- `reduce(&mut state, &mut runtime, &input)`: deterministic, no I/O, no clocks; advances
+- `reduce(&mut state, &mut runtime, &arrival)`: deterministic, no I/O, no clocks; advances
   the state in place, without copying it, and returns the effects to
-  execute. Every `Speak` carries the triggering input's trace id, which
+  execute. The input's `Arrival` carries when it arrived, stamped on the
+  run's shared clock where it was made; Core takes that time once, as a
+  `Now`, and every effect and stamp of the input's handling uses it,
+  passed down by value. Core's state keeps no copy of it. The event
+  queue's paused runtime holds it (`Shared::now`, read through
+  `Cx::now`): it persists there between steps, and is overwritten as
+  each step starts (`feed`) and by a rebuild (`rebuild`) before anything
+  reads it. The one time the state keeps is the front entry's
+  checkpoint's, the time its entry started, from which a rebuilt
+  function polls. Every `Speak` carries the triggering input's trace id, which
   is what makes end-to-end latency timelines possible, and the number of
   the user input that caused it, if one did (below, "Key numbers").
 - `SrState::announces_toggle_key`: whether a lock key's announcement is
@@ -58,11 +67,6 @@ in its rustdoc (`cargo doc -p verbatim-core --no-deps --open`).
     application the focus belongs to; `focus_report()`, the focus's
     snapshot, its ancestors, and the navigator object, which the control
     plane's `DumpFocus` answers with.
-  - `latest_focus_observed_at()`, when the newest focus the reducer took
-    was observed, in microseconds (the focus object's own observation
-    time, `None` when it is not known), which lets the
-    shell skip a fake focus after a menu closes when a later focus has
-    been taken.
   - `attention()`, the application holding attention, which the shell
     sends to the supervisor.
   - `held_nodes()` and `held_anchors()`: every node id and every text
@@ -514,16 +518,17 @@ holds, so dropping a long segment never recurses once per entry.
 `with_default_bounds(initial)` uses the shell's bounds,
 `DEFAULT_MAX_ENTRIES` (1,024 inputs) and `DEFAULT_MAX_BYTES` (8 MiB, which
 ordinary inputs never reach, so text-bearing inputs are what it caps);
-`record_input(input, effect_count, &state)` clones the state only
+`record_input(arrival, effect_count, &state)` clones the state only
 when a checkpoint is due; `dump_inputs()` gives the recorded inputs,
-oldest first, ready to replay from the checkpoint.
+each with its arrival time, oldest first, ready to replay from the
+checkpoint.
 `RecordedInput::estimated_bytes()` is the entry's inline size plus the
 heap it owns, found by `HeapCounter`, a serde serializer that formats
 nothing and adds each string's length and each element's inline size. It
 is kept over counting the entry's JSON because its cost is constant per
 string, where formatting JSON scans every byte of a terminal document on
 the reducer's step before its speech.
-`replay(initial, inputs)` re-runs a recorded sequence and returns the
+`replay(initial, arrivals)` re-runs a recorded sequence and returns the
 effects per step; tests prove it deterministic, and prove that a window
 that has dropped its start replays from its checkpoint to the effects the
 live session produced. `RecordedInput` and `SrState` derive `Serialize`
@@ -541,7 +546,7 @@ inputs start from, then one compact-JSON `RecordedInput` per line.
 base, inputs)` writes one; `read_dump(reader)` reads one back as
 `DumpContents` (header, base state, the inputs that parsed completely, and
 whether the file ended mid-line). It reads only `DUMP_FORMAT_VERSION`
-(9), and keeps no fallbacks for dumps older code wrote: a dump either
+(10), and keeps no fallbacks for dumps older code wrote: a dump either
 loads or reports its own error.
 
 `DumpReadError` distinguishes a missing header, a malformed header, an
@@ -1749,8 +1754,18 @@ console's caret event is its caret.
   (`TerminalSpeechState::cut_at_ms` against the read's start) only the
   answers to keys are spoken (`Mark::Silent`).
 - Anything that cuts speech drops the output waiting and handed to
-  speech: a key's cut (`QueueInput::SpeechCut`), a step whose effects stop speech or
-  interrupt, and `Input::UtteranceCancelled`. `Input::UtteranceFailed`
+  speech, and names its kind (`terminal::Cut`): a key's cut
+  (`QueueInput::SpeechCut`), the speech side's report of an utterance
+  whose marks output handed to speech still waits for
+  (`Input::UtteranceCancelled`), and a step whose effects stop speech or
+  interrupt. Only the first two hold back the output of reads begun
+  before them, by moving `cut_at_ms` to the input's time; a step's own
+  cut moves nothing, so a read begun before it is spoken, as NVDA speaks
+  a monitor read queued after its cancel (`docs/parity/terminals.md`,
+  "Output", Dickson 2026-10-10). A key's cut drops what speech was
+  handed, so the speech side's later report of it matches nothing; the
+  report moves the fence only when it reaches Core before the key's own
+  cut. `Input::UtteranceFailed`
   counts as heard. The output waiting is the focus's: a focus moving to
   another node forgets it, an outpost replaced under the same focus keeps
   it, and output utterances carry the focus's validity.
@@ -1856,8 +1871,11 @@ held at the next read's start) and the answers to the requests they make;
   starting read, and whether it is an output read. The reading keeps the
   ask of a read it has out (`Reading::Out`, `Baselining`) and reads the
   answer back with it, at the times the reader's worker stamped on the
-  answer (`Answer::began_us` and `ended_us`, which the event queue hands
-  to `Request::decode` and `Logic::facts_answered` as `Stamps`); a read
+  answer (`Answer::began_us` and `ended_us`, which the event queue parses
+  once into `Ran::Worker(Stamps)` for a reader's result and `Ran::NoWorker`
+  for every other ending, Core's plain reader's results among them, and
+  hands to `Request::decode` and `Logic::facts_answered`; a terminal read
+  with no worker's run does not decode); a read
   that found the terminal's node or the start named gone ends as "not
   there". A
   read identical to the last one given to the rules, with its times,

@@ -533,7 +533,8 @@ pub(crate) fn executed(
         held_child: held.held_child,
     };
     let origin = Origin::of_tell(&candidate.tell, candidate.window, candidate.fence);
-    let executed = execute(&mut cx.facts_mut(), &origin, read, known, &read_by);
+    let now = cx.now();
+    let executed = execute(&mut cx.facts_mut(), &origin, read, known, (&read_by, now));
     let fence = crate::entries::front_fence(cx);
     executed.deliver(cx, fence);
     true

@@ -307,22 +307,29 @@ fn owner_button_read() -> Found {
 /// reader and kind, each cancel by its reader and reason, each utterance
 /// by its words.
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
-        .into_iter()
-        .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => {
-                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
-            }
-            Effect::Queue(QueueEffect::Cancel { to, cancel }) => {
-                Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
-            }
-            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => {
-                Some("not responding".to_owned())
-            }
-            said => spoken(&said),
-        })
-        .collect()
+    feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Queue(QueueEffect::Send { to, ask }) => {
+            Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
+        }
+        Effect::Queue(QueueEffect::Cancel { to, cancel }) => {
+            Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
+        }
+        Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => {
+            Some("not responding".to_owned())
+        }
+        said => spoken(&said),
+    })
+    .collect()
 }
 
 /// An utterance's words, a key's own included.
@@ -364,11 +371,18 @@ fn keyed(held: &mut Held, at_us: u64, reply: Found) -> Vec<(String, Option<u64>)
     }
     let number = out(held);
     let input = found(held, OUTPOST, number, reply);
-    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
-        .iter()
-        .filter_map(of)
-        .collect()
+    feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
+    .iter()
+    .filter_map(of)
+    .collect()
 }
 
 /// A request as these tests name it: a focus read by its kind and whether
@@ -620,7 +634,7 @@ fn a_modifier_alone_leaves_the_dialog_for_its_show() {
     let cut = QueueInput::SpeechCut {
         key: KeySeq::new(2),
     };
-    let trace = (TraceId::from_raw(1_150), 1_150);
+    let trace = (TraceId::from_raw(1_150), crate::now::Now::from_raw(1_150));
     let _ = crate::entries::route(&mut held.state, &mut held.runtime, trace, &cut);
     shown_speaks_the_dialog(&mut held, 1_200);
 }
@@ -851,7 +865,7 @@ fn the_outpost_ending_postpones_again_and_the_show_speaks() {
         reader: Reader::Outpost(APP),
         generation: GENERATION + 1,
     };
-    held.state.queue.start_for_tests(next);
+    held.state.queue.start_for_tests(next, 1_160);
     let ready_next = Input::ReaderReady(next);
     assert_eq!(step(&mut held, 1_160, ready_next), [ASK_CURRENT]);
     let hidden = found(&held, next, out(&held), hidden_dialog());
@@ -924,14 +938,14 @@ fn the_secure_desktop_while_postponed() {
     let mut held = postponed();
     let switch = |held: &mut Held, at_us, open| {
         let input = crate::input_desktop::tests::switch(open);
-        let trace = (TraceId::from_raw(at_us), at_us);
+        let trace = (TraceId::from_raw(at_us), crate::now::Now::from_raw(at_us));
         crate::entries::route(&mut held.state, &mut held.runtime, trace, &input).said()
     };
     let _ = switch(&mut held, 1_150, false);
     assert_eq!(held.state.versions.postponed, None);
     let _ = switch(&mut held, 2_000, true);
     let due = 2_000 + crate::input_desktop::RETURN_DELAY_US;
-    let trace = (TraceId::from_raw(due), due);
+    let trace = (TraceId::from_raw(due), crate::now::Now::from_raw(due));
     let returned = crate::entries::route(
         &mut held.state,
         &mut held.runtime,

@@ -51,8 +51,8 @@ use verbatim_model::request::{
     Answer, ForegroundReport, Instance, Outcome, ProcessFact, QueueEffect, QueueInput, Reader,
 };
 use verbatim_model::{
-    Earcon, Effect, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid, ReaderSettings, TraceId,
-    WindowHandle,
+    Arrival, Earcon, Effect, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid, ReaderSettings,
+    TraceId, WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -333,11 +333,7 @@ fn run(
         QueueInput::Ignored(ignored_pids),
         QueueInput::Process(ProcessFact::OwnProcess(Pid(own_pid))),
     ] {
-        let _ = command_tx.send(ShellCommand::Input(Box::new(Input::Queue {
-            trace_id: TraceId::mint(),
-            at_us: now_us(),
-            input: fact,
-        })));
+        let _ = command_tx.send(ShellCommand::Input(Box::new(queued(fact))));
     }
     // The session's lock state: queried now, then followed by Windows'
     // session notifications (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state").
@@ -442,7 +438,7 @@ fn run(
     // The start, which the reducer reports with the start sound, and the
     // initial outpost target (the focus listener only reports foreground
     // changes after this point).
-    let _ = command_tx.send(ShellCommand::Input(Box::new(Input::Started)));
+    let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(Input::Started))));
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
@@ -901,7 +897,8 @@ pub(crate) type Commands = Poster<ShellCommand>;
 pub(crate) enum ShellCommand {
     /// A message from the supervisor, put in line by [`outpost_sink`].
     Outpost(OutpostMessage),
-    Input(Box<Input>),
+    /// An input to the reducer, stamped where it was made.
+    Input(Box<Arrival>),
     /// A control-plane tree dump, reading locations when the flag says.
     DumpTree(DumpTicket, bool, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
@@ -980,7 +977,7 @@ struct ReducerThread<'a> {
     last_press: Option<verbatim_model::KeySeq>,
     /// Inputs an effect produced, applied once the current input's effects
     /// have all been executed, so one input is reduced at a time.
-    follow_ups: Vec<Input>,
+    follow_ups: Vec<Arrival>,
     /// The right to speak, which only this thread holds.
     token: SpeakToken,
     /// What the control plane reports as readiness, and the harness's
@@ -1304,7 +1301,7 @@ impl ReducerThread<'_> {
                 // since: Core names the keys to release, and drops the
                 // rest.
                 self.queue(QueueInput::Exit);
-                self.apply(Input::Exiting { replaced });
+                self.apply(arrived(Input::Exiting { replaced }));
                 let _ = heard.send(self.exit_sound.take());
             }
             ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
@@ -1340,12 +1337,11 @@ impl ReducerThread<'_> {
     /// queue with its caret key bound to the committed focus as Core takes
     /// it, in the order of the inputs before it, and starts its latency
     /// line.
-    fn take_input(&mut self, mut input: Input) {
+    fn take_input(&mut self, mut arrival: Arrival) {
         if let Input::Queue {
             trace_id,
             input: QueueInput::Press(press),
-            ..
-        } = &mut input
+        } = &mut arrival.input
         {
             self.last_press = Some(press.key_seq);
             self.context
@@ -1356,7 +1352,7 @@ impl ReducerThread<'_> {
                 *bound = self.state.caret_binding().map(Box::new);
             }
         }
-        self.apply(input);
+        self.apply(arrival);
     }
 
     /// Notes that the harness's numbered input `input` has been handled,
@@ -1447,15 +1443,15 @@ impl ReducerThread<'_> {
     fn change_terminal_settings(&mut self, change: verbatim_gui::TerminalChange) {
         let mut settings = self.state.settings();
         change.apply_to(&mut settings);
-        self.apply(Input::Settings(settings));
+        self.apply(arrived(Input::Settings(settings)));
         self.context.reader.changed(settings);
     }
 
     /// Runs one input through the reducer, records it in the flight
     /// recorder, and executes the resulting effects.
-    fn apply(&mut self, input: Input) {
-        let trace_id = input.trace_id().unwrap_or_else(TraceId::mint);
-        let effects = reduce(&mut self.state, &mut self.runtime, &input);
+    fn apply(&mut self, arrival: Arrival) {
+        let trace_id = arrival.input.trace_id().unwrap_or_else(TraceId::mint);
+        let effects = reduce(&mut self.state, &mut self.runtime, &arrival);
         if let Some(readiness) = &self.readiness
             && readiness.core((self.state.readiness(), self.state.focus_committed()))
         {
@@ -1469,7 +1465,7 @@ impl ReducerThread<'_> {
                 .recorder
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            recorder.record_input(input, effects.len(), &self.state);
+            recorder.record_input(arrival, effects.len(), &self.state);
         }
         for effect in effects {
             self.execute(trace_id, effect);
@@ -1961,9 +1957,17 @@ impl ReducerThread<'_> {
 }
 
 /// `input` for Core's event queue, arriving now.
-fn queued(input: QueueInput) -> Input {
-    Input::Queue {
+fn queued(input: QueueInput) -> Arrival {
+    arrived(Input::Queue {
         trace_id: TraceId::mint(),
+        input,
+    })
+}
+
+/// `input`, arriving now: stamped with the run's shared clock where it is
+/// made, the one time Core takes for its handling.
+pub(crate) fn arrived(input: Input) -> Arrival {
+    Arrival {
         at_us: now_us(),
         input,
     }
@@ -2061,7 +2065,7 @@ fn reducer_loop(
         readiness: Some(readiness),
     };
     // The settings come first, before anything they govern.
-    thread.apply(Input::Settings(settings));
+    thread.apply(arrived(Input::Settings(settings)));
     thread.send_views();
     loop {
         let due = thread.next_deadline();
@@ -2189,7 +2193,7 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
 /// announce ("caps lock on"): its toggle bit, as `GetKeyState` reads it on
 /// this thread, which reads no keyboard messages, as the hook thread reads
 /// Num Lock's before each key.
-fn read_toggle_key(toggle: LockKey) -> Input {
+fn read_toggle_key(toggle: LockKey) -> Arrival {
     let vk = verbatim_input::ToggleKey::of_lock_key(toggle).vk();
     // SAFETY: GetKeyState takes a virtual-key code and reads key state.
     let on =
@@ -2200,7 +2204,7 @@ fn read_toggle_key(toggle: LockKey) -> Input {
 /// The localized current time and date, read for the time gesture, key
 /// `key`, whose effect ran under `trace_id`, for the reducer to speak the
 /// time on a first press and the date on a quick second (`repeat`).
-fn read_clock(trace_id: TraceId, repeat: u8, key: verbatim_model::KeySeq) -> Input {
+fn read_clock(trace_id: TraceId, repeat: u8, key: verbatim_model::KeySeq) -> Arrival {
     let time = datetime::local_time();
     let date = datetime::local_date();
     if time.is_none() || date.is_none() {
@@ -2210,13 +2214,13 @@ fn read_clock(trace_id: TraceId, repeat: u8, key: verbatim_model::KeySeq) -> Inp
             "the system time or date could not be formatted"
         );
     }
-    Input::ClockRead {
+    arrived(Input::ClockRead {
         trace_id,
         repeat,
         key,
         time,
         date,
-    }
+    })
 }
 
 /// The GUI event thread body: the Exit item asks the app to shut down; the
@@ -2239,20 +2243,20 @@ fn gui_event_loop(
                     trace_id: TraceId::mint(),
                     name,
                 };
-                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
+                let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(input))));
             }
             GuiEvent::BlockedByMessageBox => {
                 let input = Input::BlockedByMessageBox {
                     trace_id: TraceId::mint(),
                 };
-                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
+                let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(input))));
             }
             GuiEvent::ShellItemUnclickable(name) => {
                 let input = Input::ShellItemUnclickable {
                     trace_id: TraceId::mint(),
                     name,
                 };
-                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
+                let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(input))));
             }
         }
     }

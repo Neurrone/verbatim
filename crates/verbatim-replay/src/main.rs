@@ -252,15 +252,15 @@ mod tests {
     /// start, a listener's focus tell, its read and completion, and two
     /// changes the outpost tells of the focus.
     const LINE_3: &str =
-        "3: Queue trace 1, at_us 1000, input Process ListenerStarted 1. 1 effect: Queue";
-    const LINE_4: &str = "4: Queue trace 2, at_us 2000, input ReaderReady generation 1, reader \"Listener\". 1 effect: Queue";
-    const LINE_5: &str = "5: Queue trace 3, at_us 3000, input Tell from (generation 1, reader \"Listener\"), tell (application \"app\", at_us 3000, checked (keyboard_focus Answered true, probe (be... (749 characters). 2 effects: Queue Send (ask (number 1, request Batch placement \"Queue\", steps 2 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 503000";
-    const LINE_6: &str = "6: Queue trace 4, at_us 4000, input Answer answer (began_us 0, ended_us 0, number 1, outcome Result Steps 2 items), from (generation 1, reader \"Listener\"). 2 effects: Queue StartOutpost 40; Queue WakeAt 13003000";
-    const LINE_7: &str = "7: Queue trace 5, at_us 5000, input Process OutpostStarted (generation 3, process 40). 1 effect: Queue WakeAt 9005000";
-    const LINE_8: &str = "8: Queue trace 6, at_us 6000, input ReaderReady generation 3, reader Outpost 40. 2 effects: Queue Send (ask (number 2, request Batch placement \"Queue\", steps 2 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000";
-    const LINE_9: &str = "9: Queue trace 7, at_us 7000, input Answer answer (began_us 0, ended_us 0, number 2, outcome Result Steps 2 items), from (generation 3, reader Outpost 40). 5 effects: Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Batch placement \"Queue\", steps 1 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000";
-    const LINE_10: &str = "10: Queue trace 8, at_us 8000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects: Speak \"55\"; Queue WakeAt 506000";
-    const LINE_11: &str = "11: Queue trace 9, at_us 9000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 9000, kind \"UiaPropertyChanged\", object Followed runti... (205 characters). 2 effects: Speak \"unavailable\"; Queue WakeAt 506000";
+        "3: at_us 1000, Queue trace 1, input Process ListenerStarted 1. 1 effect: Queue";
+    const LINE_4: &str = "4: at_us 2000, Queue trace 2, input ReaderReady generation 1, reader \"Listener\". 1 effect: Queue";
+    const LINE_5: &str = "5: at_us 3000, Queue trace 3, input Tell from (generation 1, reader \"Listener\"), tell (application \"app\", at_us 3000, checked (keyboard_focus Answered true, probe (be... (749 characters). 2 effects: Queue Send (ask (number 1, request Batch placement \"Queue\", steps 2 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 503000";
+    const LINE_6: &str = "6: at_us 4000, Queue trace 4, input Answer answer (began_us 0, ended_us 0, number 1, outcome Result Steps 2 items), from (generation 1, reader \"Listener\"). 2 effects: Queue StartOutpost 40; Queue WakeAt 13003000";
+    const LINE_7: &str = "7: at_us 5000, Queue trace 5, input Process OutpostStarted (generation 3, process 40). 1 effect: Queue WakeAt 9005000";
+    const LINE_8: &str = "8: at_us 6000, Queue trace 6, input ReaderReady generation 3, reader Outpost 40. 2 effects: Queue Send (ask (number 2, request Batch placement \"Queue\", steps 2 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000";
+    const LINE_9: &str = "9: at_us 7000, Queue trace 7, input Answer answer (began_us 0, ended_us 0, number 2, outcome Result Steps 2 items), from (generation 3, reader Outpost 40). 5 effects: Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Batch placement \"Queue\", steps 1 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000";
+    const LINE_10: &str = "10: at_us 8000, Queue trace 8, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects: Speak \"55\"; Queue WakeAt 506000";
+    const LINE_11: &str = "11: at_us 9000, Queue trace 9, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 9000, kind \"UiaPropertyChanged\", object Followed runti... (205 characters). 2 effects: Speak \"unavailable\"; Queue WakeAt 506000";
 
     /// Line `number` of the fixture, its recorded effect count `from`, set
     /// to `to`.
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(
             report.lines,
             [
-                "10: Queue trace 8, at_us 8000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects (differs: the dump recorded 4): Speak \"55\"; Queue WakeAt 506000",
+                "10: at_us 8000, Queue trace 8, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects (differs: the dump recorded 4): Speak \"55\"; Queue WakeAt 506000",
                 LINE_11,
                 "replayed 2 inputs, lines 10 to 11: 1 differs from the dump's effect count",
             ]
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(
             report.lines,
             [
-                "9: Queue trace 7, at_us 7000, input Answer answer (began_us 0, ended_us 0, number 2, outcome Result Steps 2 items), from (generation 3, reader Outpost 40). 5 effects (differs: the dump recorded 6): Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Batch placement \"Queue\", steps 1 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000",
+                "9: at_us 7000, Queue trace 7, input Answer answer (began_us 0, ended_us 0, number 2, outcome Result Steps 2 items), from (generation 3, reader Outpost 40). 5 effects (differs: the dump recorded 6): Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Batch placement \"Queue\", steps 1 items, verdict \"Uia\", w... (143 characters); Queue WakeAt 506000",
                 LINE_10,
                 "replayed 2 inputs, lines 9 to 10: 1 differs from the dump's effect count",
             ]

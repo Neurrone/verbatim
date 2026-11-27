@@ -39,11 +39,14 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::{Backend, Effect, Pid, WindowHandle};
 
 use crate::focus::backend::{BackendCache, JudgedWindow, WindowKey};
+use crate::now::Now;
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Input, Timed};
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
-pub(crate) use request::{Outcome, Refused, Request, Stamps};
+#[cfg(test)]
+pub(crate) use request::Stamps;
+pub(crate) use request::{Outcome, Ran, Refused, Request};
 pub(crate) use table::{Asker, Live};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
@@ -291,9 +294,9 @@ pub(crate) trait Logic: Sized + 'static {
     ) -> Option<verbatim_model::request::CancelReason>;
 
     /// The entry appended when `window`, in the recovery set, answers
-    /// again; what Core's facts keep of the window may change, as a
-    /// terminal is read again.
-    fn recovered(facts: &mut Self::Facts, window: &RequestWindow) -> Option<Self::Entry>;
+    /// again at `now`; what Core's facts keep of the window may change, as
+    /// a terminal is read again.
+    fn recovered(facts: &mut Self::Facts, window: &RequestWindow, now: Now) -> Option<Self::Entry>;
 
     /// The requests Core's facts want sent now, outside the queue, in
     /// order with the queue's requests: taken whenever the queue settles,
@@ -304,18 +307,17 @@ pub(crate) trait Logic: Sized + 'static {
     }
 
     /// A request Core's facts asked under `token` ended with `outcome`, a
-    /// result with when its reader's worker ran it, at `now_us` with
-    /// `foreground` the foreground record: what the facts keep of it
-    /// changes, what that says goes into `said`, and the entries returned
-    /// join the back.
+    /// result with who ran it, at `now` with `foreground` the foreground
+    /// record: what the facts keep of it changes, what that says goes into
+    /// `said`, and the entries returned join the back.
     fn facts_answered(
         facts: &mut Self::Facts,
         token: u64,
-        outcome: Outcome<(verbatim_model::request::Reply, Stamps)>,
-        (now_us, foreground): (u64, Option<Foreground>),
+        outcome: Outcome<(verbatim_model::request::Reply, Ran)>,
+        (now, foreground): (Now, Option<Foreground>),
         said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, token, outcome, now_us, foreground, said);
+        let _ = (facts, token, outcome, now, foreground, said);
         Vec::new()
     }
 
@@ -371,16 +373,16 @@ pub(crate) trait Logic: Sized + 'static {
         None
     }
 
-    /// `instance` ended: what Core's facts keep of it change, what that
-    /// says goes into `said`, and the entries returned join the back (the
-    /// re-take, asked only with `retake`).
+    /// `instance` ended at `now`: what Core's facts keep of it change,
+    /// what that says goes into `said`, and the entries returned join the
+    /// back (the re-take, asked only with `retake`).
     fn reader_ended(
         facts: &mut Self::Facts,
         instance: Instance,
-        (foreground, retake): (Option<Foreground>, bool),
+        (foreground, retake, now): (Option<Foreground>, bool, Now),
         said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, instance, foreground, retake, said);
+        let _ = (facts, instance, foreground, retake, now, said);
         Vec::new()
     }
 
@@ -399,11 +401,16 @@ pub(crate) trait Logic: Sized + 'static {
         Vec::new()
     }
 
-    /// The waiting `entry` ended because the foreground changed
+    /// The waiting `entry` ended at `now` because the foreground changed
     /// ([`Logic::ends_at_foreground`]): what Core's facts keep of it
     /// change, and what that says goes into `said`.
-    fn ended_at_foreground(facts: &mut Self::Facts, entry: &Self::Entry, said: &mut Vec<Effect>) {
-        let _ = (facts, entry, said);
+    fn ended_at_foreground(
+        facts: &mut Self::Facts,
+        entry: &Self::Entry,
+        now: Now,
+        said: &mut Vec<Effect>,
+    ) {
+        let _ = (facts, entry, now, said);
     }
 
     /// The earliest time Core's facts want a wake at, such as a held key's
@@ -413,16 +420,16 @@ pub(crate) trait Logic: Sized + 'static {
         None
     }
 
-    /// A timer came due at `now_us`, with `foreground` the foreground
-    /// record: what Core's facts keep for that time happens, what that
-    /// says goes into `said`, and the entries returned join the back.
+    /// A timer came due at `now`, with `foreground` the foreground record:
+    /// what Core's facts keep for that time happens, what that says goes
+    /// into `said`, and the entries returned join the back.
     fn tick(
         facts: &mut Self::Facts,
-        now_us: u64,
+        now: Now,
         foreground: Option<Foreground>,
         said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, now_us, foreground, said);
+        let _ = (facts, now, foreground, said);
         Vec::new()
     }
 
@@ -451,17 +458,18 @@ pub(crate) trait Logic: Sized + 'static {
         Vec::new()
     }
 
-    /// `entry` joins the back of the queue: what Core's facts keep of the
-    /// arrivals changes, and the entry is stamped with what it needs of
-    /// them and of the front, `front`, with its request waiting or out.
-    /// Called for every entry that joins, before the limiter places it; an
-    /// entry dropped at its arrival never joins.
+    /// `entry` joins the back of the queue at `now`: what Core's facts
+    /// keep of the arrivals changes, and the entry is stamped with what it
+    /// needs of them and of the front, `front`, with its request waiting
+    /// or out. Called for every entry that joins, before the limiter
+    /// places it; an entry dropped at its arrival never joins.
     fn arrival(
         facts: &mut Self::Facts,
         front: Option<(&Self::Entry, Option<&verbatim_model::request::Question>)>,
         entry: &mut Self::Entry,
+        now: Now,
     ) {
-        let _ = (facts, front, entry);
+        let _ = (facts, front, entry, now);
     }
 
     /// `said`, emitted by the front entry `entry`'s function, stamped with

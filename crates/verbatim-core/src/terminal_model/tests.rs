@@ -123,7 +123,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
         // Escape: the hook's clearing key.
         press(verbatim_model::request::PressAction::Clearing, 8),
     ] {
-        crate::keys::terminal::arrived(&mut state, &entry);
+        crate::keys::terminal::arrived(&mut state, &entry, crate::now::Now::from_raw(0));
     }
     let kept: Vec<_> = state.terminals[0]
         .pending
@@ -395,7 +395,7 @@ fn the_read_after_the_focus_returns_is_given_though_identical() {
     let _ = watch.write("50%", 100, false);
     let _ = watch.write("", 200, false);
     assert!(watch.write("", 300, false).speech.is_none());
-    super::model_or_new(&mut watch.state, watched()).focused(350);
+    super::model_or_new(&mut watch.state, watched()).focused();
     assert!(watch.write("", 400, false).speech.is_some());
 }
 
@@ -407,7 +407,7 @@ fn the_focus_exception_ends_at_the_first_read_given() {
     let _ = watch.write("50%", 100, false);
     let _ = watch.write("", 200, false);
     assert!(watch.write("", 300, false).speech.is_none());
-    super::model_or_new(&mut watch.state, watched()).focused(350);
+    super::model_or_new(&mut watch.state, watched()).focused();
     assert!(watch.write("", 400, false).speech.is_some());
     assert!(watch.write("", 500, false).speech.is_none());
 }

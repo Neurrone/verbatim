@@ -25,6 +25,7 @@ use super::{
     Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit, caret_key_kind,
     typed_kind,
 };
+use crate::now::Now;
 use crate::reduce::reduce;
 use crate::state::SrState;
 
@@ -113,15 +114,16 @@ fn said_of(speech: TerminalSpeech) -> Said {
 /// with a read's speech at its turn, and cuts speech off when that does,
 /// as the reducer does after each input.
 fn say(state: &mut SrState, out: &Out) -> Vec<Effect> {
+    let now = Now::from_raw(out.observed_at_ms * 1_000);
     let mut effects = super::speech(
         state,
-        TraceId::from_raw(2),
-        out.observed_at_ms,
+        (TraceId::from_raw(2), out.observed_at_ms),
         id(out.node),
         said_of(out.speech.clone()),
+        now,
     );
     if effects.iter().any(super::cuts_speech) {
-        effects.extend(super::cut(state, 0));
+        effects.extend(super::cut(state, super::Cut::Step, now));
     }
     effects
 }
@@ -134,7 +136,7 @@ trait Fed {
     fn fed(&self, state: &mut SrState, playback: &mut Playback) -> Vec<Effect>;
 }
 
-impl Fed for Input {
+impl Fed for verbatim_model::Arrival {
     fn fed(&self, state: &mut SrState, _: &mut Playback) -> Vec<Effect> {
         reduce(state, &mut crate::Runtime::default(), self)
     }
@@ -149,7 +151,7 @@ impl Fed for Out {
             playback.unread.push(self.speech.clone());
         }
         let now_us = playback.clock_us;
-        super::reading::told(state, id(self.node), now_us, now_us);
+        super::reading::told(state, id(self.node), now_us, Now::from_raw(now_us));
         Vec::new()
     }
 }
@@ -182,25 +184,29 @@ fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
 
 /// Speech reaching index mark `mark`, as the shell tells the queue.
 /// `input` as the shell gives it to the queue.
-fn queue_input(input: verbatim_model::request::QueueInput) -> Input {
-    Input::Queue {
-        trace_id: TraceId::from_raw(7),
+fn queue_input(input: verbatim_model::request::QueueInput) -> verbatim_model::Arrival {
+    verbatim_model::Arrival {
         at_us: 0,
-        input,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(7),
+            input,
+        },
     }
 }
 
-fn mark_reached(mark: SpeechMark) -> Input {
-    Input::Queue {
-        trace_id: TraceId::from_raw(0),
+fn mark_reached(mark: SpeechMark) -> verbatim_model::Arrival {
+    verbatim_model::Arrival {
         at_us: 0,
-        input: verbatim_model::request::QueueInput::MarkReached(mark),
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(0),
+            input: verbatim_model::request::QueueInput::MarkReached(mark),
+        },
     }
 }
 
 /// Key `key` pressed, `action` as the hook reports it to the event queue,
 /// `key` milliseconds after the first second.
-fn press(key: u64, action: verbatim_model::request::PressAction) -> Input {
+fn press(key: u64, action: verbatim_model::request::PressAction) -> verbatim_model::Arrival {
     queue_input(verbatim_model::request::QueueInput::Press(Box::new(
         verbatim_model::request::Press {
             key_seq: verbatim_model::KeySeq::new(key),
@@ -210,7 +216,7 @@ fn press(key: u64, action: verbatim_model::request::PressAction) -> Input {
     )))
 }
 
-fn typed(key: u64, text: &str) -> Input {
+fn typed(key: u64, text: &str) -> verbatim_model::Arrival {
     press(
         key,
         verbatim_model::request::PressAction::Typed {
@@ -363,15 +369,16 @@ impl Playback {
     fn answer_with(&mut self, state: &mut SrState, token: u64, read: Option<TerminalSpeech>) {
         let output = read.unwrap_or_else(|| self.take_unread());
         self.clock_us += 1;
+        let now = Now::from_raw(self.clock_us);
         let Some(entry) =
-            super::reading::answered_with(state, token, said_of(output), self.clock_us)
+            super::reading::answered_with(state, token, said_of(output), (self.clock_us, now))
         else {
             self.serve(state);
             return;
         };
-        let mut effects = super::reading::speak(state, entry);
+        let mut effects = super::reading::speak(state, entry, now);
         if effects.iter().any(super::cuts_speech) {
-            effects.extend(super::cut(state, 0));
+            effects.extend(super::cut(state, super::Cut::Step, now));
         }
         self.take(state, effects);
     }
@@ -540,7 +547,12 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         window: window(),
         console: false,
     };
-    let _ = super::reading::committed(&mut state, Some(other), Vec::new(), (0, false));
+    let _ = super::reading::committed(
+        &mut state,
+        Some(other),
+        Vec::new(),
+        (Now::from_raw(0), false),
+    );
     let _ = state.wants.take_for_tests();
     let before = state.clone();
     let mut said = Vec::new();
@@ -549,7 +561,7 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         &mut state,
         read,
         crate::event_queue::Outcome::Result((answer, ran)),
-        (1_000, TraceId::from_raw(4)),
+        (Now::from_raw(1_000), TraceId::from_raw(4)),
         &mut said,
     );
     assert_eq!((entries, said), (Vec::new(), Vec::new()));
@@ -569,12 +581,12 @@ const FIRST: WindowAsk = WindowAsk {
 fn answer_to(
     ask: &WindowAsk,
     reply: &WindowReply,
-) -> (verbatim_model::request::Reply, crate::event_queue::Stamps) {
+) -> (verbatim_model::request::Reply, crate::event_queue::Ran) {
     let (outcomes, (began_us, ended_us)) =
         super::reader::answers::outcomes(id(TERMINAL), ask, reply);
     (
         verbatim_model::request::Reply::Steps(outcomes),
-        crate::event_queue::Stamps { began_us, ended_us },
+        crate::event_queue::Ran::Worker(crate::event_queue::Stamps { began_us, ended_us }),
     )
 }
 
@@ -582,7 +594,7 @@ fn answer_to(
 /// ended `failure`, the text unread or a call failed.
 fn failed(
     failure: StepOutcome,
-) -> impl Fn(&verbatim_model::request::Ask) -> (verbatim_model::request::Reply, crate::event_queue::Stamps)
+) -> impl Fn(&verbatim_model::request::Ask) -> (verbatim_model::request::Reply, crate::event_queue::Ran)
 {
     move |ask| {
         let steps = match &ask.request {
@@ -590,9 +602,34 @@ fn failed(
         };
         (
             verbatim_model::request::Reply::Steps(vec![failure.clone(); steps]),
-            crate::event_queue::Stamps::default(),
+            crate::event_queue::Ran::Worker(crate::event_queue::Stamps {
+                began_us: 1_000,
+                ended_us: 1_000,
+            }),
         )
     }
+}
+
+/// `input` for Core's event queue, traced `trace` and arriving at `at_us`.
+fn queued_at(
+    (trace, at_us): (u64, u64),
+    input: verbatim_model::request::QueueInput,
+) -> verbatim_model::Arrival {
+    verbatim_model::Arrival {
+        at_us,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(trace),
+            input,
+        },
+    }
+}
+
+/// The times a reader's worker ran a read, which its answer carries.
+fn worker_stamps(ran: crate::event_queue::Ran) -> crate::event_queue::Stamps {
+    let crate::event_queue::Ran::Worker(stamps) = ran else {
+        panic!("a reader's result is its worker's");
+    };
+    stamps
 }
 
 /// The full read of the terminal `ask` asks, as its reader wrote it.
@@ -741,7 +778,10 @@ fn terminal_with_full_lines(full: u16) -> SrState {
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),
-        &Input::Settings(settings),
+        &verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Settings(settings),
+        },
     );
     state
 }
@@ -951,11 +991,13 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
     playback.queued.clear();
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(1),
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(1),
+                },
             },
         },
     );
@@ -987,11 +1029,13 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
     playback.heard.clear();
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(1),
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(1),
+                },
             },
         },
     );
@@ -1019,11 +1063,13 @@ fn output_read_before_a_cut_is_not_spoken() {
     let mut playback = Playback::default();
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 5_000_000,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(1),
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(1),
+                },
             },
         },
     );
@@ -1192,7 +1238,13 @@ fn turning_report_new_output_off_in_the_settings_drops_what_is_waiting() {
     assert!(playback.play_one(&mut state));
     let mut settings = state.settings();
     settings.report_terminal_output = false;
-    playback.feed(&mut state, &Input::Settings(settings));
+    playback.feed(
+        &mut state,
+        &verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Settings(settings),
+        },
+    );
     // Only what speech already had plays; the rest of the output is gone,
     // as when Verbatim+5 turns reporting off. "line 1" played before the
     // change, and speech held the next two.
@@ -1213,10 +1265,12 @@ fn output_carries_on_past_an_utterance_that_failed() {
     let (marks, _) = playback.queued.pop_front().expect("line 1 handed on");
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::UtteranceFailed { marks },
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::UtteranceFailed { marks },
+            },
         },
     );
     assert_eq!(
@@ -1236,11 +1290,13 @@ fn speech_cut_off_drops_the_output_still_waiting() {
     playback.queued.clear();
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(1),
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(1),
+                },
             },
         },
     );
@@ -1373,7 +1429,10 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),
-        &Input::Settings(settings),
+        &verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Settings(settings),
+        },
     );
     let effects = reduce(&mut state, &mut crate::Runtime::default(), &typed(1, "p"));
     assert_eq!(
@@ -1402,15 +1461,14 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
     let review =
         |state: &mut SrState,
          key: u64,
-         answer: &dyn Fn(&verbatim_model::request::Ask) -> (Reply, crate::event_queue::Stamps)|
+         answer: &dyn Fn(&verbatim_model::request::Ask) -> (Reply, crate::event_queue::Ran)|
          -> (bool, Vec<String>) {
             let effects = reduce(
                 state,
                 &mut crate::Runtime::default(),
-                &Input::Queue {
-                    trace_id: TraceId::from_raw(7),
-                    at_us: key * 10_000,
-                    input: QueueInput::Press(Box::new(Press {
+                &queued_at(
+                    (7, key * 10_000),
+                    QueueInput::Press(Box::new(Press {
                         key_seq: verbatim_model::KeySeq::new(key),
                         pressed_at_us: key * 10_000,
                         action: PressAction::Command {
@@ -1418,7 +1476,7 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
                             repeat: 0,
                         },
                     })),
-                },
+                ),
             );
             let asked: Vec<_> = effects
                 .into_iter()
@@ -1432,13 +1490,13 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
             };
             let number = ask.number;
             let (reply, ran) = answer(ask);
+            let ran = worker_stamps(ran);
             let effects = reduce(
                 state,
                 &mut crate::Runtime::default(),
-                &Input::Queue {
-                    trace_id: TraceId::from_raw(8),
-                    at_us: key * 10_000 + 1_000,
-                    input: QueueInput::Answer {
+                &queued_at(
+                    (8, key * 10_000 + 1_000),
+                    QueueInput::Answer {
                         from: crate::entries::tests::OUTPOST,
                         answer: Answer {
                             number,
@@ -1449,7 +1507,7 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
                             ended_us: ran.ended_us,
                         },
                     },
-                },
+                ),
             );
             let undecodable = effects
                 .iter()
@@ -1508,17 +1566,19 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         let effects = reduce(
             state,
             &mut crate::Runtime::default(),
-            &Input::Queue {
-                trace_id: TraceId::from_raw(7),
+            &verbatim_model::Arrival {
                 at_us: 1_000,
-                input: QueueInput::Press(Box::new(Press {
-                    key_seq: verbatim_model::KeySeq::new(1),
-                    pressed_at_us: 1_000,
-                    action: PressAction::Command {
-                        command: ReviewCommand::ReviewCurrentLine,
-                        repeat: 0,
-                    },
-                })),
+                input: Input::Queue {
+                    trace_id: TraceId::from_raw(7),
+                    input: QueueInput::Press(Box::new(Press {
+                        key_seq: verbatim_model::KeySeq::new(1),
+                        pressed_at_us: 1_000,
+                        action: PressAction::Command {
+                            command: ReviewCommand::ReviewCurrentLine,
+                            repeat: 0,
+                        },
+                    })),
+                },
             },
         );
         let asked: Vec<_> = effects
@@ -1532,21 +1592,24 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
             panic!("one read asked: {asked:?}");
         };
         let (reply, ran) = answer_to(&full_read_of(ask), &read_reply("ready>"));
+        let ran = worker_stamps(ran);
         let effects = reduce(
             state,
             &mut crate::Runtime::default(),
-            &Input::Queue {
-                trace_id: TraceId::from_raw(8),
+            &verbatim_model::Arrival {
                 at_us: 2_000,
-                input: QueueInput::Answer {
-                    from: crate::entries::tests::OUTPOST,
-                    answer: Answer {
-                        number: ask.number,
-                        outcome: Outcome::Result(reply),
-                        probes: Vec::new(),
-                        detail: String::new(),
-                        began_us: ran.began_us,
-                        ended_us: ran.ended_us,
+                input: Input::Queue {
+                    trace_id: TraceId::from_raw(8),
+                    input: QueueInput::Answer {
+                        from: crate::entries::tests::OUTPOST,
+                        answer: Answer {
+                            number: ask.number,
+                            outcome: Outcome::Result(reply),
+                            probes: Vec::new(),
+                            detail: String::new(),
+                            began_us: ran.began_us,
+                            ended_us: ran.ended_us,
+                        },
                     },
                 },
             },
@@ -1593,11 +1656,13 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
+        &verbatim_model::Arrival {
             at_us: 5_000_000,
-            input: verbatim_model::request::QueueInput::SpeechCut {
-                key: verbatim_model::KeySeq::new(1),
+            input: Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                input: verbatim_model::request::QueueInput::SpeechCut {
+                    key: verbatim_model::KeySeq::new(1),
+                },
             },
         },
     );
@@ -1631,10 +1696,12 @@ fn output_cut_off_outside_the_reducer_is_released_by_the_pipelines_report() {
     for (marks, _) in cut {
         playback.feed(
             &mut state,
-            &Input::Queue {
-                trace_id: verbatim_model::TraceId::from_raw(0),
+            &verbatim_model::Arrival {
                 at_us: 0,
-                input: verbatim_model::request::QueueInput::UtteranceCancelled { marks, at_ms: 0 },
+                input: Input::Queue {
+                    trace_id: verbatim_model::TraceId::from_raw(0),
+                    input: verbatim_model::request::QueueInput::UtteranceCancelled { marks },
+                },
             },
         );
     }
@@ -1690,10 +1757,14 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     playback.requests.clear();
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(6),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(6),
+                input: verbatim_model::request::QueueInput::ReaderEnded(
+                    crate::entries::tests::OUTPOST,
+                ),
+            },
         },
     );
     // The replacement starts and answers the re-take with the same
@@ -1703,7 +1774,7 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
         reader: verbatim_model::request::Reader::Outpost(crate::entries::tests::APP),
         generation: crate::entries::tests::GENERATION + 1,
     };
-    state.queue.start_for_tests(replacement);
+    state.queue.start_for_tests(replacement, 0);
     playback.feed(
         &mut state,
         &queue_input(verbatim_model::request::QueueInput::ReaderReady(
@@ -1803,8 +1874,13 @@ fn answered_unspoken(state: &mut SrState, playback: &mut Playback) -> super::rea
     let token = playback.late.take().expect("a release read held back");
     let unread = playback.take_unread();
     playback.clock_us += 1;
-    super::reading::answered_with(state, token, said_of(unread), playback.clock_us)
-        .expect("the release read's speech entry")
+    super::reading::answered_with(
+        state,
+        token,
+        said_of(unread),
+        (playback.clock_us, Now::from_raw(playback.clock_us)),
+    )
+    .expect("the release read's speech entry")
 }
 
 /// What a burst sounds like: lines 1 to 30, then `skipped` when given, then
@@ -1827,7 +1903,7 @@ fn a_release_spoken_after_the_last_line_is_heard_is_in_the_backlog_look() {
     assert!(playback.play_one(&mut state));
     assert!(playback.play_one(&mut state));
     assert!(playback.queued.is_empty());
-    let effects = super::reading::speak(&mut state, entry);
+    let effects = super::reading::speak(&mut state, entry, Now::from_raw(playback.clock_us));
     playback.take(&mut state, effects);
     let mut heard = std::mem::take(&mut playback.heard);
     heard.extend(playback.play_all(&mut state));
@@ -1882,7 +1958,7 @@ fn a_release_read_refused_after_the_last_line_decides_the_backlog_at_once() {
         crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
             verbatim_model::request::Refusal::Unsupported,
         )),
-        (1_000, TraceId::from_raw(4)),
+        (Now::from_raw(1_000), TraceId::from_raw(4)),
         &mut said,
     );
     assert_eq!(entries, Vec::new());
@@ -1918,10 +1994,10 @@ fn an_owed_read_after_the_release_is_waited_for_when_the_last_line_was_heard_fir
         &mut state,
         first,
         said_of(speech_of(None, lines(41..=70))),
-        playback.clock_us,
+        (playback.clock_us, Now::from_raw(playback.clock_us)),
     )
     .expect("the release read's speech entry");
-    let effects = super::reading::speak(&mut state, entry);
+    let effects = super::reading::speak(&mut state, entry, Now::from_raw(playback.clock_us));
     playback.take(&mut state, effects);
     assert_eq!(
         playback.requests,
@@ -1949,7 +2025,7 @@ fn an_owed_read_answered_before_the_first_release_entrys_turn_is_waited_for() {
         &mut state,
         first,
         said_of(speech_of(None, lines(41..=70))),
-        playback.clock_us,
+        (playback.clock_us, Now::from_raw(playback.clock_us)),
     )
     .expect("the release read's speech entry");
     assert!(playback.play_one(&mut state));
@@ -1965,11 +2041,11 @@ fn an_owed_read_answered_before_the_first_release_entrys_turn_is_waited_for() {
         &mut state,
         owed,
         said_of(speech_of(None, lines(71..=100))),
-        playback.clock_us,
+        (playback.clock_us, Now::from_raw(playback.clock_us)),
     )
     .expect("the owed read's speech entry");
     for entry in [first, second] {
-        let effects = super::reading::speak(&mut state, entry);
+        let effects = super::reading::speak(&mut state, entry, Now::from_raw(playback.clock_us));
         playback.take(&mut state, effects);
     }
     let mut heard = std::mem::take(&mut playback.heard);
@@ -1982,17 +2058,21 @@ fn an_owed_read_answered_before_the_first_release_entrys_turn_is_waited_for() {
 fn outpost_replaced(state: &mut SrState, playback: &mut Playback) {
     playback.feed(
         state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(6),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(6),
+                input: verbatim_model::request::QueueInput::ReaderEnded(
+                    crate::entries::tests::OUTPOST,
+                ),
+            },
         },
     );
     let replacement = verbatim_model::request::Instance {
         reader: verbatim_model::request::Reader::Outpost(crate::entries::tests::APP),
         generation: crate::entries::tests::GENERATION + 1,
     };
-    state.queue.start_for_tests(replacement);
+    state.queue.start_for_tests(replacement, 0);
     playback.feed(
         state,
         &queue_input(verbatim_model::request::QueueInput::ReaderReady(
@@ -2066,7 +2146,12 @@ fn a_flood_waiting_for_its_release_goes_on_after_a_re_take() {
 fn a_flood_goes_on_after_the_same_terminal_is_committed_again_with_its_release_out() {
     let (mut state, mut playback) = release_out(41..=60);
     let terminal = super::reading::focused(&state).expect("the focused terminal");
-    let effects = super::reading::committed(&mut state, Some(terminal), Vec::new(), (0, false));
+    let effects = super::reading::committed(
+        &mut state,
+        Some(terminal),
+        Vec::new(),
+        (Now::from_raw(playback.clock_us), false),
+    );
     playback.take(&mut state, effects);
     playback.answer(&mut state);
     let mut heard = std::mem::take(&mut playback.heard);
@@ -2085,7 +2170,7 @@ fn a_flood_waiting_for_its_release_goes_on_after_its_follow_is_refused() {
     assert!(playback.play_one(&mut state));
     assert!(playback.play_one(&mut state));
     assert!(playback.queued.is_empty());
-    super::reading::recovered(&mut state, &window(), 600_000);
+    super::reading::recovered(&mut state, &window(), Now::from_raw(600_000));
     let follow = state
         .wants
         .take_for_tests()
@@ -2099,7 +2184,7 @@ fn a_flood_waiting_for_its_release_goes_on_after_its_follow_is_refused() {
         crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
             verbatim_model::request::Refusal::Unsupported,
         )),
-        (600_500, TraceId::from_raw(4)),
+        (Now::from_raw(600_500), TraceId::from_raw(4)),
         &mut said,
     );
     assert_eq!(entries, Vec::new());
@@ -2129,10 +2214,14 @@ fn a_flood_waiting_for_its_release_hands_on_its_backlog_when_its_outpost_ends() 
     assert!(playback.queued.is_empty());
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(6),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(6),
+                input: verbatim_model::request::QueueInput::ReaderEnded(
+                    crate::entries::tests::OUTPOST,
+                ),
+            },
         },
     );
     let mut heard = std::mem::take(&mut playback.heard);
@@ -2150,14 +2239,340 @@ fn a_flood_whose_outpost_ends_before_its_last_line_is_heard_waits_for_the_re_tak
     let (mut state, mut playback) = release_out(41..=60);
     playback.feed(
         &mut state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(6),
+        &verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(6),
+                input: verbatim_model::request::QueueInput::ReaderEnded(
+                    crate::entries::tests::OUTPOST,
+                ),
+            },
         },
     );
     let mut heard = std::mem::take(&mut playback.heard);
     heard.extend(playback.play_all(&mut state));
     assert_eq!(heard, lines(1..=30));
     assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// The focused terminal's change told at `told_us`, its output read out:
+/// the read's token.
+fn output_read_out(state: &mut SrState, told_us: u64) -> u64 {
+    super::reading::told(state, id(TERMINAL), told_us, Now::from_raw(told_us));
+    let _ = state.wants.take_for_tests();
+    match out_read(state) {
+        Some((token, Read::Spoken)) => token,
+        other => panic!("an output read out, not {other:?}"),
+    }
+}
+
+/// Output read `token` answered as a read begun at `began_us` that said
+/// `items`: what its speech entry speaks at its turn.
+fn answered_begun(
+    state: &mut SrState,
+    token: u64,
+    began_us: u64,
+    items: Vec<TerminalItem>,
+) -> Vec<String> {
+    let entry = super::reading::answered_with(
+        state,
+        token,
+        said_of(TerminalSpeech {
+            items,
+            followed: false,
+        }),
+        (began_us, Now::from_raw(began_us + 1)),
+    )
+    .expect("the read is out");
+    spoken(&super::reading::speak(
+        state,
+        entry,
+        Now::from_raw(began_us + 1),
+    ))
+}
+
+/// Key 1's press cutting speech, as the hook reports it at `at_us`.
+fn key_cut(at_us: u64) -> verbatim_model::Arrival {
+    verbatim_model::Arrival {
+        at_us,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(0),
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
+        },
+    }
+}
+
+/// Lines 1 to 3 handed to speech and line 1 heard: the marks of the
+/// utterances still queued, lines 2 and 3, as the pipeline reports them
+/// when it cuts them off.
+fn two_lines_queued(state: &mut SrState, playback: &mut Playback) -> Vec<SpeechMark> {
+    playback.feed(state, &output(lines(1..=3)));
+    assert!(playback.play_one(state));
+    let queued: Vec<SpeechMark> = playback
+        .queued
+        .drain(..)
+        .flat_map(|(marks, _)| marks)
+        .collect();
+    assert!(!queued.is_empty(), "lines 2 and 3 are handed to speech");
+    queued
+}
+
+/// The pipeline's report of the utterances carrying `marks`, cut off, at
+/// `at_us`.
+fn cancelled_at(marks: Vec<SpeechMark>, at_us: u64) -> verbatim_model::Arrival {
+    verbatim_model::Arrival {
+        at_us,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(0),
+            input: verbatim_model::request::QueueInput::UtteranceCancelled { marks },
+        },
+    }
+}
+
+/// A key's cut holds back the output of a read begun before it; its
+/// answers to keys are spoken (`docs/parity/terminals.md`, "Output",
+/// Dickson 2026-10-10).
+#[test]
+fn a_keys_cut_drops_the_output_of_a_read_begun_before_it() {
+    let mut state = terminal();
+    let token = output_read_out(&mut state, 1_000_000);
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &key_cut(5_000_000),
+    );
+    assert_eq!(
+        answered_begun(
+            &mut state,
+            token,
+            4_000_000,
+            vec![
+                TerminalItem::Answer("> a".to_owned()),
+                TerminalItem::Output("before".to_owned()),
+            ]
+        ),
+        ["> a"]
+    );
+}
+
+/// The pipeline's report of terminal speech it cut off can reach Core
+/// before the key's own cut, since the hook posts its cancel to speech
+/// first: the report fences reads at its time, and the key's earlier cut
+/// leaves the fence there.
+#[test]
+fn the_pipelines_report_reaching_core_before_the_keys_cut_fences_at_the_report() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    let marks = two_lines_queued(&mut state, &mut playback);
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &cancelled_at(marks, 6_000_000),
+    );
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &key_cut(5_000_000),
+    );
+    let token = output_read_out(&mut state, 6_100_000);
+    assert_eq!(
+        answered_begun(
+            &mut state,
+            token,
+            5_500_000,
+            vec![TerminalItem::Output("between".to_owned())]
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// The usual order: the key's cut reaches Core first and drops the
+/// speech handed on, so the pipeline's later report matches nothing and
+/// the fence stays at the key: a read begun after the key is spoken.
+#[test]
+fn the_pipelines_report_after_the_keys_cut_leaves_the_fence_at_the_key() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    let marks = two_lines_queued(&mut state, &mut playback);
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &key_cut(5_000_000),
+    );
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &cancelled_at(marks, 6_000_000),
+    );
+    let token = output_read_out(&mut state, 6_100_000);
+    assert_eq!(
+        answered_begun(
+            &mut state,
+            token,
+            5_500_000,
+            vec![TerminalItem::Output("between".to_owned())]
+        ),
+        ["between"]
+    );
+}
+
+/// A cut that is not a key, here the clipboard's confirmation spoken
+/// interrupting, drops what waits but holds back no read begun before it,
+/// as NVDA speaks a monitor read queued after its cancel
+/// (`NVDAObjects/behaviors.py` 468 to 505).
+#[test]
+fn a_steps_own_cut_holds_back_no_read_begun_before_it() {
+    let mut state = terminal();
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &key_cut(1_000_000),
+    );
+    let token = output_read_out(&mut state, 2_000_000);
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &verbatim_model::Arrival {
+            at_us: 4_000_000,
+            input: Input::ClipboardCopied {
+                trace_id: TraceId::from_raw(3),
+                text: "x".to_owned(),
+                copied: true,
+            },
+        },
+    );
+    assert_eq!(
+        answered_begun(
+            &mut state,
+            token,
+            3_000_000,
+            vec![TerminalItem::Output("after".to_owned())]
+        ),
+        ["after"]
+    );
+}
+
+/// Key 1, typed "a", given to the reading rules of the terminal's model
+/// at `at_ms`: its window runs to 300 ms after.
+fn key_given(state: &mut SrState, at_ms: u64) {
+    if crate::terminal_model::model_of(state, id(TERMINAL)).is_none() {
+        let _ = state.terminals.add(
+            id(TERMINAL),
+            verbatim_text::terminal_reading::Settings::default(),
+        );
+    }
+    let model = crate::terminal_model::model_mut(state, id(TERMINAL)).expect("its model");
+    let _ = model.rules().key(verbatim_text::terminal_reading::Key {
+        kind: verbatim_text::terminal_reading::KeyKind::Typed("a".to_owned()),
+        at_ms,
+        tag: verbatim_text::terminal_reading::KeyTag {
+            trace: 1,
+            number: 1,
+        },
+    });
+}
+
+/// The baseline the committed terminal asks: whether it takes colours.
+fn baseline_colours(state: &SrState) -> bool {
+    match state.terminal_focus.focused {
+        super::reading::FocusedTerminal::Baselining {
+            read: Some((_, ask)),
+            ..
+        } => ask.colours,
+        other => panic!("the terminal baselining, not {other:?}"),
+    }
+}
+
+/// A focus Core read itself landing on the terminal long after a key's
+/// window ended: its baseline, sent at the commit, takes no colours
+/// (`books/dev/src/explanation/design/terminal-model.md`, rule 23).
+#[test]
+fn a_baseline_core_read_itself_after_a_keys_window_takes_no_colours() {
+    use crate::entries::tests::{OUTPOST, feed_at, focus_read, ready, values};
+    let mut held = ready();
+    key_given(&mut held.state, 1);
+    let _ = feed_at(
+        &mut held,
+        10_000_000,
+        crate::event_queue::Input::Foreground(crate::event_queue::Foreground {
+            window: verbatim_model::WindowHandle(4),
+            root_owner: verbatim_model::WindowHandle(4),
+            process: Some(crate::entries::tests::APP),
+            thread: 41,
+            by_class: None,
+            ..crate::event_queue::Foreground::BLANK
+        }),
+    );
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Terminal", Role::Terminal);
+    let _ = found_at(&mut held, 10_100_000, (OUTPOST, 1), Found::Read(read));
+    assert!(!baseline_colours(&held.state));
+}
+
+/// A focus a tell named, observed inside a key's window and committed
+/// after it ended: its baseline is sent at the commit, outside the
+/// window, and takes no colours.
+#[test]
+fn a_baseline_from_a_tell_takes_colours_by_when_it_is_sent() {
+    use crate::entries::tests::{
+        LISTENER, OUTPOST, entry, feed_at, focus_read, listener_answer, ready, uia_tell, values,
+    };
+    let mut held = ready();
+    key_given(&mut held.state, 0);
+    let _ = feed_at(&mut held, 1_000, entry(uia_tell(1, Vec::new())));
+    let _ = found_at(&mut held, 2_000, (LISTENER, 1), listener_answer());
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Terminal", Role::Terminal);
+    let _ = found_at(&mut held, 400_000, (OUTPOST, 2), Found::Read(read));
+    assert!(!baseline_colours(&held.state));
+}
+
+/// "Report new output" turned off in the settings while changes are held
+/// unread: they are read by a silent read sent then, which takes colours
+/// by the settings' own time, past the key's window, and not by the last
+/// queue input's.
+#[test]
+fn a_silent_read_after_the_settings_turn_output_off_takes_colours_by_their_time() {
+    let mut state = terminal();
+    key_given(&mut state, 1);
+    if let super::reading::FocusedTerminal::Modelled { reading, .. } =
+        &mut state.terminal_focus.focused
+    {
+        *reading = super::reading::Reading::Holding { told: Some(50_000) };
+    }
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &verbatim_model::Arrival {
+            at_us: 100_000,
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(4),
+                input: verbatim_model::request::QueueInput::Alt { down: false },
+            },
+        },
+    );
+    let mut settings = state.settings();
+    settings.report_terminal_output = false;
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &verbatim_model::Arrival {
+            at_us: 1_000_000,
+            input: Input::Settings(settings),
+        },
+    );
+    match state.terminal_focus.focused {
+        super::reading::FocusedTerminal::Modelled {
+            reading:
+                super::reading::Reading::Out {
+                    mark: super::reading::Mark::Silent,
+                    ask,
+                    ..
+                },
+            ..
+        } => assert!(!ask.colours),
+        other => panic!("a silent read out, not {other:?}"),
+    }
 }

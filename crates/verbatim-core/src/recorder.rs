@@ -7,7 +7,7 @@
 //! turns a flight-recorder dump from a live session into a regression test.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Effect, Input};
+use verbatim_model::{Arrival, Effect};
 
 use crate::flight_recorder::FlightRecorder;
 use crate::reduce::reduce;
@@ -18,8 +18,8 @@ use crate::state::SrState;
 /// disk in a flight-recorder dump (see [`crate::dump`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedInput {
-    /// The input as it was fed to the reducer.
-    pub input: Input,
+    /// The input as it was fed to the reducer, with when it arrived.
+    pub arrival: Arrival,
     /// Number of effects the reducer emitted for this input.
     pub effect_count: usize,
 }
@@ -321,9 +321,9 @@ impl ReducerRecorder {
     /// when this step closes a segment of the window (see
     /// [`crate::flight_recorder`] for the rule). The state is cloned only
     /// then, and its clone shares everything large.
-    pub fn record_input(&mut self, input: Input, effect_count: usize, state: &SrState) {
+    pub fn record_input(&mut self, arrival: Arrival, effect_count: usize, state: &SrState) {
         let entry = RecordedInput {
-            input,
+            arrival,
             effect_count,
         };
         let bytes = entry.estimated_bytes();
@@ -333,28 +333,28 @@ impl ReducerRecorder {
     /// The recorded inputs, oldest first, with their effect counts dropped —
     /// ready to feed to [`replay`] from [`FlightRecorder::checkpoint`].
     #[must_use]
-    pub fn dump_inputs(&self) -> Vec<Input> {
+    pub fn dump_inputs(&self) -> Vec<Arrival> {
         self.entries()
             .into_iter()
-            .map(|entry| entry.input.clone())
+            .map(|entry| entry.arrival.clone())
             .collect()
     }
 }
 
-/// Replays `inputs` against `initial` and returns the effects produced by
-/// each step, in order.
+/// Replays `arrivals` against `initial` and returns the effects produced
+/// by each step, in order.
 ///
 /// The reducer is deterministic, so this always reproduces exactly what a
 /// live session saw: the same initial state and input sequence yield the
 /// same effects, every time.
 #[must_use]
-pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
+pub fn replay(initial: &SrState, arrivals: &[Arrival]) -> Vec<Vec<Effect>> {
     let mut state = initial.clone();
     // A clone has no paused function: the runtime rebuilds it.
     let mut runtime = crate::Runtime::default();
-    let mut all_effects = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        all_effects.push(reduce(&mut state, &mut runtime, input));
+    let mut all_effects = Vec::with_capacity(arrivals.len());
+    for arrival in arrivals {
+        all_effects.push(reduce(&mut state, &mut runtime, arrival));
     }
     all_effects
 }
@@ -362,31 +362,33 @@ pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::TraceId;
+    use verbatim_model::{Input, TraceId};
 
     /// A key typing `text`, as the hook reports it to the event queue.
-    fn typed(text: String) -> Input {
-        Input::Queue {
-            trace_id: TraceId::from_raw(1),
+    fn typed(text: String) -> Arrival {
+        verbatim_model::Arrival {
             at_us: 0,
-            input: verbatim_model::request::QueueInput::Press(Box::new(
-                verbatim_model::request::Press {
-                    key_seq: verbatim_model::KeySeq::new(1),
-                    pressed_at_us: 0,
-                    action: verbatim_model::request::PressAction::Typed { text },
-                },
-            )),
+            input: Input::Queue {
+                trace_id: TraceId::from_raw(1),
+                input: verbatim_model::request::QueueInput::Press(Box::new(
+                    verbatim_model::request::Press {
+                        key_seq: verbatim_model::KeySeq::new(1),
+                        pressed_at_us: 0,
+                        action: verbatim_model::request::PressAction::Typed { text },
+                    },
+                )),
+            },
         }
     }
 
     #[test]
     fn an_inputs_text_is_counted_in_its_estimate() {
         let small = RecordedInput {
-            input: typed(String::new()),
+            arrival: typed(String::new()),
             effect_count: 0,
         };
         let large = RecordedInput {
-            input: typed("x".repeat(100_000)),
+            arrival: typed("x".repeat(100_000)),
             effect_count: 0,
         };
         assert_eq!(small.estimated_bytes(), size_of::<RecordedInput>());

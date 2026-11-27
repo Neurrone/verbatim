@@ -18,7 +18,7 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Pid, WindowHandle};
 
-use super::{Instance, Reader, RequestWindow, Route, Stamps};
+use super::{Instance, Ran, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
 
 /// Who asked a request outside the event queue, by the token the shell
@@ -116,11 +116,11 @@ impl Live {
 /// How a live request ended.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Ending {
-    /// Its reader answered, with when its worker ran it, or Core answered
-    /// for it, with no stamps: "not responding" when the shell refused to
-    /// send it to a hung window, "ended" when its reader ended, and Core's
-    /// plain reader's answer.
-    Answered(WireOutcome, Stamps),
+    /// Its reader answered, with who ran it, or Core answered for it, with
+    /// no worker run: "not responding" when the shell refused to send it
+    /// to a hung window, "ended" when its reader ended, and Core's plain
+    /// reader's answer.
+    Answered(WireOutcome, Ran),
     /// The shell answered a read of an application's current focus unsent
     /// with what it read in front ([`Front`]), which only that request's
     /// reply decodes ([`super::Request::decode_in_front`]).
@@ -199,6 +199,21 @@ impl Table {
         self.last
     }
 
+    /// When the next half-second hang round is due, while one is armed.
+    #[cfg(test)]
+    pub(crate) fn round_due_for_tests(&self) -> Option<u64> {
+        self.round_due_us
+    }
+
+    /// When Core stops waiting for request `number`, while it waits or is
+    /// out.
+    #[cfg(test)]
+    pub(crate) fn due_for_tests(&self, number: u64) -> Option<u64> {
+        self.live
+            .get(&RequestNumber(number))
+            .map(|live| live.due_us)
+    }
+
     /// The requests waiting or out, as sent.
     pub(crate) fn requests(&self) -> impl Iterator<Item = &Question> {
         self.live.values().map(|live| &live.request)
@@ -241,7 +256,7 @@ impl Table {
         }
         self.end(
             number,
-            Ending::Answered(outcome, Stamps::default()),
+            Ending::Answered(outcome, Ran::NoWorker),
             &mut Vec::new(),
         )
     }
@@ -313,7 +328,7 @@ impl Table {
         &mut self,
         from: Instance,
         number: RequestNumber,
-        (outcome, ran): (WireOutcome, Stamps),
+        (outcome, ran): (WireOutcome, Ran),
     ) -> Result<Ended, Dropped> {
         if self
             .live
@@ -343,7 +358,7 @@ impl Table {
         }
         self.end(
             number,
-            Ending::Answered(WireOutcome::NotResponding, Stamps::default()),
+            Ending::Answered(WireOutcome::NotResponding, Ran::NoWorker),
             &mut Vec::new(),
         )
     }
@@ -417,7 +432,7 @@ impl Table {
             .filter_map(|number| {
                 self.end(
                     number,
-                    Ending::Answered(WireOutcome::Ended, Stamps::default()),
+                    Ending::Answered(WireOutcome::Ended, Ran::NoWorker),
                     &mut Vec::new(),
                 )
             })
@@ -440,7 +455,7 @@ impl Table {
             .filter_map(|number| {
                 self.end(
                     number,
-                    Ending::Answered(outcome.clone(), Stamps::default()),
+                    Ending::Answered(outcome.clone(), Ran::NoWorker),
                     &mut Vec::new(),
                 )
             })

@@ -40,9 +40,6 @@ pub(crate) struct FocusContext {
     pub(crate) reported_focused: bool,
     /// The trace of the event Core took this focus from.
     pub(crate) trace_id: Option<TraceId>,
-    /// When that event was observed, in microseconds on the run's shared
-    /// clock (0 when not known).
-    pub(crate) observed_at_us: u64,
     /// What Core last spoke of the focus and its ancestors. A focus taken
     /// writes it, as does a report that speaks the focus's reading, a name,
     /// value or description change on the focus, a state change on the
@@ -947,17 +944,6 @@ impl SrState {
     #[must_use]
     pub fn focus_source(&self) -> Option<Pid> {
         self.versions.focus().map(|focus| focus.context.source)
-    }
-
-    /// When the focus object, the newest focus the reducer took, was
-    /// observed, in microseconds since the Unix epoch on the run's shared
-    /// clock; `None` before any, or when its observation is not known.
-    #[must_use]
-    pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.versions
-            .focus()
-            .map(|focus| focus.context.observed_at_us)
-            .filter(|&observed| observed != 0)
     }
 
     /// Every node the state refers to, grouped by the outpost that issued

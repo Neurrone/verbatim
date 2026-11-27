@@ -673,7 +673,10 @@ impl Text {
         let _ = verbatim_core::reduce(
             &mut self.desk.state,
             &mut self.desk.runtime,
-            &Input::Settings(settings),
+            &verbatim_model::Arrival {
+                at_us: 0,
+                input: Input::Settings(settings),
+            },
         );
     }
 
@@ -3479,10 +3482,13 @@ fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
     assert_eq!(session.heard(), []);
 
     // With terminal passwords spoken, typing is echoed at once.
-    session.input(&Input::Settings(ReaderSettings {
-        speak_terminal_passwords: true,
-        ..ReaderSettings::default()
-    }));
+    session.input(&verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::Settings(ReaderSettings {
+            speak_terminal_passwords: true,
+            ..ReaderSettings::default()
+        }),
+    });
     session.press(&typed("x"));
     // Echoed by the key's own entry, whose speech carries its number.
     assert_eq!(session.heard(), [terminal_support::said(None, "x")]);
@@ -3773,7 +3779,7 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     let _ = text.command(ReviewCommand::SayAllFromCaret, 0);
     let (said, _) = said_all(text.chunks(vec![line("One.\n", 100, 0), line("Two.\n", 101, 0)]));
     assert_eq!(texts_of(&said), [["One."], ["Two."]]);
-    let cut = |marks| QueueInput::UtteranceCancelled { marks, at_ms: 0 };
+    let cut = |marks| QueueInput::UtteranceCancelled { marks };
     // An utterance with no mark of say-all's changes nothing.
     assert_eq!(text.speech(cut(vec![SpeechMark(9_999)])), []);
     // Its read out is withdrawn as it stops.

@@ -179,6 +179,8 @@ books/dev/src/reference/crates/verbatim-core.md 26-72 documents the dead focus_r
 
 execute.rs 611 `crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);`, where `observed_at_us` is 0 for Core's own reads (execute.rs 303, and 626 for the again path); the callee's `focus(at_ms)` does `let _ = at_ms;` (verbatim-text/src/terminal_reading.rs 669-670). M6.4 rewrites terminal reading.
 
+Resolved (2026-11-27): `observed_at_us` is gone; `committed` takes the step's `Now`, and the rules' `focus()` takes no time.
+
 ## 3. Test findings (verbatim-core)
 
 322 tests: focus_speech 88, shown 32, plain 31, validity 28, backend 20, identity 19, menus 17, acceptance 16, versions 15, replay_validity 14 (one ignored), duplicate 13, follow 10, retake 10, focus_rules 5, hung_menu_end 4. No generated test and no allowance in the area.

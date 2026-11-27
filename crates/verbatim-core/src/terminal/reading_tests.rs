@@ -11,6 +11,15 @@ use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::*;
 
+/// The time `us`, as the input a step handles carries it.
+fn at(us: u64) -> Now {
+    Now::from_raw(us)
+}
+
+/// A time later than every other a test of the reading names, for the
+/// steps whose time the test does not turn on.
+const LATER: Now = Now::from_raw(1_000_000);
+
 fn node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 12)
 }
@@ -139,14 +148,17 @@ fn answer(
     });
     let outcome = outcome.map(|reply| {
         let (outcomes, (began_us, ended_us)) = reader::answers::outcomes(node(), &ask, &reply);
-        (Reply::Steps(outcomes), Stamps { began_us, ended_us })
+        (
+            Reply::Steps(outcomes),
+            crate::event_queue::Ran::Worker(crate::event_queue::Stamps { began_us, ended_us }),
+        )
     });
     let mut said = Vec::new();
     answered(
         state,
         token,
         outcome,
-        (now_us, TraceId::from_raw(1)),
+        (at(now_us), TraceId::from_raw(1)),
         &mut said,
     )
 }
@@ -164,7 +176,7 @@ fn token(wants: &[(Want, u64)], want: Want) -> u64 {
 /// baseline wanted, their tokens.
 fn baselining() -> (SrState, u64, u64) {
     let mut state = SrState::new();
-    let _ = committed(&mut state, Some(terminal()), Vec::new(), (1_000, false));
+    let _ = committed(&mut state, Some(terminal()), Vec::new(), (at(1_000), false));
     let wanted = wants(&mut state);
     assert_eq!(kinds(&wanted), [Want::Baseline]);
     (state, 0, token(&wanted, Want::Baseline))
@@ -206,7 +218,12 @@ fn a_terminal_committed_is_followed_then_baselined() {
             extra: None,
         }),
     );
-    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
+    let _ = committed(
+        &mut state,
+        Some(terminal()),
+        vec![follow],
+        (at(1_000), false),
+    );
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Baseline]);
     assert!(matches!(
         state.terminal_focus.focused,
@@ -224,7 +241,7 @@ fn a_terminal_committed_is_followed_then_baselined() {
 #[test]
 fn a_change_told_before_the_baseline_answers_is_read_after_it() {
     let (mut state, _, baseline) = baselining();
-    told(&mut state, node(), 1_500, 1_500);
+    told(&mut state, node(), 1_500, at(1_500));
     assert_eq!(wants(&mut state), [], "the baseline is out");
     let _ = answer(&mut state, baseline, read("$ ", 1_000), 2_000);
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
@@ -241,7 +258,7 @@ fn a_failed_baseline_is_sent_at_the_next_change() {
         2_000,
     );
     assert_eq!(wants(&mut state), []);
-    told(&mut state, node(), 3_000, 3_000);
+    told(&mut state, node(), 3_000, at(3_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Baseline]);
 }
 
@@ -250,18 +267,18 @@ fn a_failed_baseline_is_sent_at_the_next_change() {
 #[test]
 fn a_change_told_while_a_read_is_out_is_read_after_it_unless_covered() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
-    told(&mut state, node(), 10_500, 10_500);
+    told(&mut state, node(), 10_500, at(10_500));
     assert_eq!(wants(&mut state), [], "one read out at a time");
     // The read began after the second change: it covered it.
     let _ = answer(&mut state, first, read("$ a", 11_000), 11_500);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Quiet);
     // A change told after the read began is read once more.
-    told(&mut state, node(), 12_000, 12_000);
+    told(&mut state, node(), 12_000, at(12_000));
     let second = token(&wants(&mut state), Want::Output);
-    told(&mut state, node(), 12_600, 12_600);
+    told(&mut state, node(), 12_600, at(12_600));
     let _ = answer(&mut state, second, read("$ ab", 12_500), 13_000);
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
 }
@@ -271,7 +288,7 @@ fn a_change_told_while_a_read_is_out_is_read_after_it_unless_covered() {
 #[test]
 fn a_change_the_last_read_covered_sends_nothing() {
     let mut state = modelled();
-    told(&mut state, node(), 500, 3_000);
+    told(&mut state, node(), 500, at(3_000));
     assert_eq!(wants(&mut state), []);
 }
 
@@ -280,7 +297,7 @@ fn a_change_the_last_read_covered_sends_nothing() {
 #[test]
 fn a_read_stopped_at_its_due_time_is_sent_again() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
     let _ = answer(
         &mut state,
@@ -303,7 +320,7 @@ fn a_read_stopped_at_its_due_time_is_sent_again() {
 #[test]
 fn a_refused_read_waits_for_the_next_change() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
     let _ = answer(
         &mut state,
@@ -321,13 +338,13 @@ fn a_refused_read_waits_for_the_next_change() {
 #[test]
 fn a_hung_read_stalls_until_the_window_answers_then_reads_once() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
     let _ = answer(&mut state, first, Outcome::NotResponding, 10_500);
     assert_eq!(reading(&state), Reading::Stalled { holding: false });
-    told(&mut state, node(), 20_000, 20_000);
+    told(&mut state, node(), 20_000, at(20_000));
     assert_eq!(wants(&mut state), [], "nothing is read while stalled");
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Output]);
 }
 
@@ -337,8 +354,8 @@ fn a_hung_read_stalls_until_the_window_answers_then_reads_once() {
 #[test]
 fn a_change_told_while_an_entrys_read_is_out_waits_behind_it() {
     let mut state = modelled();
-    let asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
-    told(&mut state, node(), 10_500, 10_500);
+    let asked = entry_read(&mut state, node(), false, at(10_000)).expect("the focused terminal");
+    told(&mut state, node(), 10_500, at(10_500));
     assert_eq!(reading(&state), Reading::Behind { told: 10_500 });
     assert_eq!(wants(&mut state), []);
     let Outcome::Result(reply) = read("$ x", 10_200) else {
@@ -348,7 +365,7 @@ fn a_change_told_while_an_entrys_read_is_out_waits_behind_it() {
         &mut state,
         &asked,
         Some(&reply),
-        (11_000, TraceId::from_raw(1)),
+        (at(11_000), TraceId::from_raw(1)),
     );
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
 }
@@ -359,9 +376,9 @@ fn a_change_told_while_an_entrys_read_is_out_waits_behind_it() {
 fn a_cut_while_holding_with_a_change_reads_it_silently() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     assert_eq!(reading(&state), Reading::Holding { told: Some(10_000) });
-    cut(&mut state);
+    cut(&mut state, LATER);
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
     assert!(matches!(
         reading(&state),
@@ -377,8 +394,8 @@ fn a_cut_while_holding_with_a_change_reads_it_silently() {
 fn a_release_read_out_at_a_cut_becomes_silent() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
-    group_last_line(&mut state);
+    told(&mut state, node(), 10_000, at(10_000));
+    group_last_line(&mut state, LATER);
     assert!(matches!(
         reading(&state),
         Reading::Out {
@@ -388,7 +405,7 @@ fn a_release_read_out_at_a_cut_becomes_silent() {
     ));
     assert!(super::release_pending(&state));
     let _ = wants(&mut state);
-    cut(&mut state);
+    cut(&mut state, LATER);
     assert_eq!(wants(&mut state), []);
     assert!(matches!(
         reading(&state),
@@ -412,7 +429,12 @@ fn a_refused_follow_ends_the_focused_terminal() {
             extra: None,
         }),
     );
-    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
+    let _ = committed(
+        &mut state,
+        Some(terminal()),
+        vec![follow],
+        (at(1_000), false),
+    );
     let follow = token(&wants(&mut state), Want::Follow);
     let _ = answer(
         &mut state,
@@ -437,14 +459,19 @@ fn a_hung_follow_waits_for_the_window_then_follows_and_baselines() {
             extra: None,
         }),
     );
-    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
+    let _ = committed(
+        &mut state,
+        Some(terminal()),
+        vec![follow],
+        (at(1_000), false),
+    );
     let follow = token(&wants(&mut state), Want::Follow);
     let _ = answer(&mut state, follow, Outcome::NotResponding, 2_000);
     assert!(matches!(
         state.terminal_focus.focused,
         FocusedTerminal::WaitingForWindow { .. }
     ));
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Baseline]);
 }
 
@@ -456,7 +483,7 @@ fn a_change_of_another_node_is_dropped() {
         &mut state,
         NodeId::in_outpost(OutpostId(1), 13),
         10_000,
-        10_000,
+        at(10_000),
     );
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Quiet);
@@ -467,7 +494,7 @@ fn a_change_of_another_node_is_dropped() {
 #[test]
 fn a_read_of_a_terminal_not_there_ends_it() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
     let _ = answer(&mut state, first, Outcome::NotThere, 11_000);
     assert_eq!(state.terminal_focus.focused, FocusedTerminal::None);
@@ -479,9 +506,9 @@ fn a_read_of_a_terminal_not_there_ends_it() {
 #[test]
 fn an_answer_after_the_focus_left_is_taken_by_nothing() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
-    let _ = committed(&mut state, None, Vec::new(), (10_500, false));
+    let _ = committed(&mut state, None, Vec::new(), (at(10_500), false));
     let before = state.clone();
     assert_eq!(answer(&mut state, first, read("$ a", 10_000), 11_000), []);
     assert_eq!(state, before);
@@ -499,7 +526,12 @@ fn followed() -> (SrState, u64, u64) {
             extra: None,
         }),
     );
-    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
+    let _ = committed(
+        &mut state,
+        Some(terminal()),
+        vec![follow],
+        (at(1_000), false),
+    );
     let wanted = wants(&mut state);
     assert_eq!(kinds(&wanted), [Want::Follow, Want::Baseline]);
     (
@@ -563,7 +595,12 @@ fn a_follow_stopped_after_the_baseline_answered_is_sent_alone() {
 #[test]
 fn a_modelled_terminal_taken_again_reads_a_new_baseline() {
     let mut state = modelled();
-    let _ = committed(&mut state, Some(terminal()), Vec::new(), (20_000, false));
+    let _ = committed(
+        &mut state,
+        Some(terminal()),
+        Vec::new(),
+        (at(20_000), false),
+    );
     assert_eq!(kinds(&wants(&mut state)), [Want::Baseline]);
     assert!(matches!(
         state.terminal_focus.focused,
@@ -577,7 +614,7 @@ fn a_modelled_terminal_taken_again_reads_a_new_baseline() {
 #[test]
 fn the_outpost_ending_drops_the_focused_terminal_and_its_models() {
     let mut state = modelled();
-    let _ = outpost_ended(&mut state, OutpostId(1));
+    let _ = outpost_ended(&mut state, OutpostId(1), LATER);
     assert_eq!(state.terminal_focus.focused, FocusedTerminal::None);
     assert!(state.terminals.is_empty());
 }
@@ -593,7 +630,7 @@ fn an_entrys_read_with_no_baseline_out_is_taken_as_the_baseline() {
         Outcome::Refused(crate::event_queue::Refused::Reader(Refusal::Unsupported)),
         2_000,
     );
-    let asked = entry_read(&mut state, node(), false, 3_000).expect("the focused terminal");
+    let asked = entry_read(&mut state, node(), false, at(3_000)).expect("the focused terminal");
     let Outcome::Result(reply) = read("$ ", 3_000) else {
         unreachable!("a read");
     };
@@ -601,7 +638,7 @@ fn an_entrys_read_with_no_baseline_out_is_taken_as_the_baseline() {
         &mut state,
         &asked,
         Some(&reply),
-        (3_500, TraceId::from_raw(1)),
+        (at(3_500), TraceId::from_raw(1)),
     );
     assert_eq!(reading(&state), Reading::Quiet);
 }
@@ -614,8 +651,8 @@ fn lines_spoken_in_full_make_a_live_terminal_hold() {
     lines_full(&mut state);
     assert_eq!(reading(&state), Reading::Holding { told: None });
     let mut state = modelled();
-    let _asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
-    told(&mut state, node(), 10_500, 10_500);
+    let _asked = entry_read(&mut state, node(), false, at(10_000)).expect("the focused terminal");
+    told(&mut state, node(), 10_500, at(10_500));
     lines_full(&mut state);
     assert_eq!(reading(&state), Reading::Holding { told: Some(10_500) });
 }
@@ -626,7 +663,7 @@ fn lines_spoken_in_full_make_a_live_terminal_hold() {
 fn a_groups_last_line_with_nothing_told_reads_nothing() {
     let mut state = modelled();
     lines_full(&mut state);
-    group_last_line(&mut state);
+    group_last_line(&mut state, LATER);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Holding { told: None });
 }
@@ -638,11 +675,11 @@ fn a_groups_last_line_with_nothing_told_reads_nothing() {
 fn the_backlog_look_reads_a_held_change_when_nothing_waits() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
-    looked(&mut state, false);
+    told(&mut state, node(), 10_000, at(10_000));
+    looked(&mut state, false, LATER);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Holding { told: Some(10_000) });
-    looked(&mut state, true);
+    looked(&mut state, true, LATER);
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
     assert!(matches!(
         reading(&state),
@@ -659,7 +696,7 @@ fn the_backlog_look_reads_a_held_change_when_nothing_waits() {
 fn the_backlog_look_with_nothing_told_makes_the_terminal_live() {
     let mut state = modelled();
     lines_full(&mut state);
-    looked(&mut state, true);
+    looked(&mut state, true, LATER);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Quiet);
 }
@@ -669,11 +706,11 @@ fn the_backlog_look_with_nothing_told_makes_the_terminal_live() {
 #[test]
 fn a_cut_with_nothing_told_asks_nothing() {
     let mut state = modelled();
-    cut(&mut state);
+    cut(&mut state, LATER);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Quiet);
     lines_full(&mut state);
-    cut(&mut state);
+    cut(&mut state, LATER);
     assert_eq!(wants(&mut state), []);
     assert_eq!(reading(&state), Reading::Quiet);
 }
@@ -684,8 +721,8 @@ fn a_cut_with_nothing_told_asks_nothing() {
 fn a_release_read_stopped_at_its_due_time_is_sent_again_as_the_release() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
-    group_last_line(&mut state);
+    told(&mut state, node(), 10_000, at(10_000));
+    group_last_line(&mut state, LATER);
     let release = token(&wants(&mut state), Want::Output);
     let _ = answer(
         &mut state,
@@ -710,14 +747,14 @@ fn a_release_read_stopped_at_its_due_time_is_sent_again_as_the_release() {
 fn a_hung_release_read_stalls_holding_and_a_cut_makes_it_live() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
-    group_last_line(&mut state);
+    told(&mut state, node(), 10_000, at(10_000));
+    group_last_line(&mut state, LATER);
     let release = token(&wants(&mut state), Want::Output);
     let _ = answer(&mut state, release, Outcome::NotResponding, 10_500);
     assert_eq!(reading(&state), Reading::Stalled { holding: true });
-    cut(&mut state);
+    cut(&mut state, LATER);
     assert_eq!(reading(&state), Reading::Stalled { holding: false });
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Output]);
 }
 
@@ -728,11 +765,11 @@ fn a_hung_release_read_stalls_holding_and_a_cut_makes_it_live() {
 fn a_stalled_holding_terminal_answering_holds_with_a_change_told() {
     let mut state = modelled();
     lines_full(&mut state);
-    told(&mut state, node(), 10_000, 10_000);
-    group_last_line(&mut state);
+    told(&mut state, node(), 10_000, at(10_000));
+    group_last_line(&mut state, LATER);
     let release = token(&wants(&mut state), Want::Output);
     let _ = answer(&mut state, release, Outcome::NotResponding, 10_500);
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow]);
     assert_eq!(
         reading(&state),
@@ -748,19 +785,19 @@ fn a_stalled_holding_terminal_answering_holds_with_a_change_told() {
 #[test]
 fn the_window_answering_again_reads_the_terminal_once() {
     let mut state = modelled();
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Output]);
 
     let mut state = modelled();
-    let _asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
-    recovered(&mut state, &window(), 600_000);
+    let _asked = entry_read(&mut state, node(), false, at(10_000)).expect("the focused terminal");
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow]);
     assert_eq!(reading(&state), Reading::Behind { told: 600_000 });
 
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let _ = wants(&mut state);
-    recovered(&mut state, &window(), 600_000);
+    recovered(&mut state, &window(), at(600_000));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow]);
     assert!(matches!(
         reading(&state),
@@ -776,9 +813,9 @@ fn the_window_answering_again_reads_the_terminal_once() {
 #[test]
 fn a_refused_read_with_a_change_told_meanwhile_reads_once_more() {
     let mut state = modelled();
-    told(&mut state, node(), 10_000, 10_000);
+    told(&mut state, node(), 10_000, at(10_000));
     let first = token(&wants(&mut state), Want::Output);
-    told(&mut state, node(), 10_500, 10_500);
+    told(&mut state, node(), 10_500, at(10_500));
     let _ = answer(
         &mut state,
         first,
@@ -786,4 +823,41 @@ fn a_refused_read_with_a_change_told_meanwhile_reads_once_more() {
         11_000,
     );
     assert_eq!(kinds(&wants(&mut state)), [Want::Output]);
+}
+
+/// A terminal's read is always its outpost worker's, so a result no worker
+/// ran, as Core's plain reader's would be, does not decode; the worker's
+/// decodes with its times.
+#[test]
+fn a_terminal_reads_result_decodes_only_with_its_workers_run() {
+    let ask = WindowAsk {
+        read: WindowRead::First,
+        colours: false,
+        starting: false,
+        output: false,
+    };
+    let Outcome::Result(reply) = read("$ ", 1_000) else {
+        unreachable!("a read");
+    };
+    let (outcomes, (began_us, ended_us)) = reader::answers::outcomes(node(), &ask, &reply);
+    let asked = EntryRead {
+        terminal: terminal(),
+        ask,
+    };
+    assert_eq!(
+        asked.decode(
+            Reply::Steps(outcomes.clone()),
+            crate::event_queue::Ran::NoWorker
+        ),
+        None
+    );
+    let decoded = asked.decode(
+        Reply::Steps(outcomes),
+        crate::event_queue::Ran::Worker(crate::event_queue::Stamps { began_us, ended_us }),
+    );
+    let Some(Ok(decoded)) = decoded else {
+        panic!("the worker's read decodes: {decoded:?}");
+    };
+    assert_eq!(decoded.started_us, began_us);
+    assert_eq!(decoded.snapshot.screen, reply.snapshot.screen);
 }

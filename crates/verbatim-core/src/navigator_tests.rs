@@ -202,7 +202,7 @@ fn a_request_on_a_navigated_node_outside_the_foreground_is_stopped() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 4_000,
+            now: crate::now::Now::from_raw(4_000),
             input: Input::Foreground(IN_FRONT),
         },
     )
@@ -352,7 +352,7 @@ fn reporting_the_object_reads_it_live_then_announces_spells_and_copies() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 6_000,
+            now: crate::now::Now::from_raw(6_000),
             input: answer(
                 OUTPOST,
                 5,
@@ -438,7 +438,15 @@ fn selected(text: &str) -> Reply {
 
 /// Feeds `input` at `at_us`, every effect.
 fn feed_all(state: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<Effect> {
-    crate::entries::feed(&mut state.state, &mut state.runtime, Timed { at_us, input }).unwrap()
+    crate::entries::feed(
+        &mut state.state,
+        &mut state.runtime,
+        Timed {
+            now: crate::now::Now::from_raw(at_us),
+            input,
+        },
+    )
+    .unwrap()
 }
 
 #[test]
@@ -1268,7 +1276,7 @@ fn the_navigator_on_the_focus_says_nothing_under_the_secure_desktop() {
     let _ = crate::entries::route(
         &mut state.state,
         &mut state.runtime,
-        (TraceId::from_raw(1), 1_000),
+        (TraceId::from_raw(1), crate::now::Now::from_raw(1_000)),
         &switch,
     );
     assert!(matches!(

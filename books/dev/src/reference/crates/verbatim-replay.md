@@ -14,21 +14,19 @@ nothing in it is Windows-specific. Its API is in its rustdoc (`cargo doc
 - `replay_dump(contents)` replays every input of a `DumpContents` from its
   base state with `verbatim_core::replay` and returns one `Replayed` per
   input: its line in the file (`FIRST_INPUT_LINE`, 3, is the first, after
-  the header and the base state), the input, the effect count the live
+  the header and the base state), the input with when it arrived, the
+  effect count the live
   session recorded, and the effects the replay produced. `differs()` is
   true when the two counts disagree: the code changed since the run, or
   the reducer is not deterministic.
 - A line renders its input and effects with the built-in default theme,
-  its sounds found in the repository's `sounds` folder. An input with no
-  time, or a time of 0, is untimed, and an input carries a trace when a
-  `trace_id` or `trace` field at any depth holds it.
+  its sounds found in the repository's `sounds` folder. An input carries
+  a trace when a `trace_id` or `trace` field at any depth holds it.
 - `failure_inputs(replayed, renderer, trace, from_us, to_us)` is what the
   end-to-end suite's failure report shows of a dump: each input carrying
-  `trace`, and each received from `from_us` to `to_us`, as a `Shown` with
-  its line, the time it is ordered by and its rendered line after its
-  marks, `(failing trace)`, `(untimed)` or both. An untimed input is
-  judged and ordered by the time of the nearest timed input before it, or
-  else after it, and is shown when no input of the dump is timed.
+  `trace`, and each that arrived from `from_us` to `to_us`, as a `Shown`
+  with its line, the time it arrived and its rendered line, after
+  `(failing trace)` for one carrying the trace.
 - The binary prints a malformed dump's error, which names the line, and
   for a dump cut off mid-line ends with the last line it read.
 - The binary first prints the commit the dump's build was made from and
@@ -47,10 +45,10 @@ nothing in it is Windows-specific. Its API is in its rustdoc (`cargo doc
 
 ## The line
 
-A line is the input's file line, a colon, the input, then its effect
-count and its effects, separated by semicolons:
+A line is the input's file line, a colon, when it arrived, the input,
+then its effect count and its effects, separated by semicolons:
 
-`3: Event FocusChanged, node Slider "Rate", whole_window false, trace 1, source 700, observed_at_us 0, backend "Uia". 2 effects: DropExpiredSpeech; Speak "Rate slider 50"`
+`5: at_us 3000, Queue trace 3, input Tell from (generation 1, reader "Listener"), tell (...). 2 effects: Queue Send (...); Queue WakeAt 503000`
 
 - An input is its variant's name, then its fields, each a name and a
   value, `trace_id` written `trace`: the trace, the source and the times

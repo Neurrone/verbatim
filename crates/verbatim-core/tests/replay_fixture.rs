@@ -31,9 +31,9 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeSnapshot, ObjectKey, Pid,
-    Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
-    UtteranceSource,
+    Arrival, Backend, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeSnapshot, ObjectKey,
+    Pid, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
+    UtteranceSegment, UtteranceSource,
 };
 
 fn fixture_path() -> PathBuf {
@@ -54,11 +54,13 @@ fn slider() -> NodeSnapshot {
 }
 
 /// `input` to Core's event queue at `at_us`, traced as `trace`.
-fn queued(trace: u64, at_us: u64, input: QueueInput) -> Input {
-    Input::Queue {
-        trace_id: TraceId::from_raw(trace),
+fn queued(trace: u64, at_us: u64, input: QueueInput) -> Arrival {
+    verbatim_model::Arrival {
         at_us,
-        input,
+        input: Input::Queue {
+            trace_id: TraceId::from_raw(trace),
+            input,
+        },
     }
 }
 
@@ -68,7 +70,7 @@ struct Script {
     state: SrState,
     runtime: Runtime,
     asked: Vec<(u64, Question)>,
-    inputs: Vec<Input>,
+    inputs: Vec<Arrival>,
 }
 
 impl Script {
@@ -81,14 +83,14 @@ impl Script {
         }
     }
 
-    /// `input` added.
-    fn push(&mut self, input: Input) {
-        for effect in reduce(&mut self.state, &mut self.runtime, &input) {
+    /// `arrival` added.
+    fn push(&mut self, arrival: Arrival) {
+        for effect in reduce(&mut self.state, &mut self.runtime, &arrival) {
             if let Effect::Queue(QueueEffect::Send { ask, .. }) = effect {
                 self.asked.push((ask.number.0, ask.request));
             }
         }
-        self.inputs.push(input);
+        self.inputs.push(arrival);
     }
 
     /// The answer to request `number` from `from`, the batch Core sent,
@@ -149,7 +151,7 @@ fn followed(trace: u64, property: PropertyId, value: PropertyValue) -> QueueInpu
 /// outpost started on Core's request and ready, its completion of the
 /// read, and its tells of the two changes. This is the session the
 /// committed fixture pins.
-fn scripted_inputs() -> Vec<Input> {
+fn scripted_inputs() -> Vec<Arrival> {
     let mut script = Script::new();
     script.push(queued(
         1,
@@ -319,7 +321,7 @@ fn replays_the_committed_fixture_deterministically_to_the_exact_effects() {
 
     assert!(!contents.truncated, "the committed fixture is complete");
 
-    let inputs: Vec<Input> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let inputs: Vec<Arrival> = contents.inputs.iter().map(|r| r.arrival.clone()).collect();
     assert_eq!(
         inputs,
         scripted_inputs(),
@@ -356,10 +358,10 @@ fn regenerate_fixture() {
     let mut state = SrState::new();
     let mut runtime = verbatim_core::Runtime::default();
     let mut recorded = Vec::new();
-    for input in scripted_inputs() {
-        let effects = reduce(&mut state, &mut runtime, &input);
+    for arrival in scripted_inputs() {
+        let effects = reduce(&mut state, &mut runtime, &arrival);
         recorded.push(RecordedInput {
-            input,
+            arrival,
             effect_count: effects.len(),
         });
     }

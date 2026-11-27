@@ -706,7 +706,7 @@ fn a_start_marker_set_then_copied_copies_the_range_read() {
         &mut state.state,
         &mut state.runtime,
         Timed {
-            at_us: 3_200,
+            now: crate::now::Now::from_raw(3_200),
             input: answer(OUTPOST, 6, text_batches::one(text_batches::range_text("o"))),
         },
     )
