@@ -1591,6 +1591,121 @@ fn a_read_inside_a_programs_redraw_speaks_the_line_its_cursor_passes() {
 }
 
 #[test]
+fn a_character_typed_during_a_redraw_leaves_the_park_back_silent() {
+    // A second key the program reads unshown, typed while the first's
+    // redraw has the cursor on row 2: a typed character keeps where the
+    // keys started, so the cursor parked back there says nothing, as NVDA
+    // says no caret line for a typed character ("The caret's line").
+    let mut term = Term::new(20, 4, 10);
+    term.write("row 1\r\nrow 2\r\n\r\nstatus: ready\x1b[4;14H", 100);
+    term.typed("n", 5000);
+    assert_eq!(
+        term.write("\x1b[2;1H\x1b[2Krow 2 changed", 5010),
+        says(vec![caret(1, Unit::Line, "row 2 changed")])
+    );
+    term.typed("n", 5015);
+    assert_eq!(term.write("\x1b[4;14H", 5020), quiet(None));
+}
+
+#[test]
+fn a_character_key_after_an_answered_character_key_in_its_window_says_its_own() {
+    // "Keys and their window": Right 200 milliseconds after Left, inside
+    // its window, both answered by reads of their own: each says the
+    // character it lands on, as NVDA reads after each caret key.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ abc", 100);
+    term.key(KeyKind::Caret(Unit::Character), 1000);
+    assert_eq!(
+        term.write("\x1b[D", 1010),
+        says(vec![caret(0, Unit::Character, "c")])
+    );
+    term.key(KeyKind::Caret(Unit::Character), 1200);
+    assert_eq!(
+        term.write("\x1b[C", 1210),
+        says(vec![caret(0, Unit::Character, "")])
+    );
+}
+
+#[test]
+fn a_word_key_after_an_answered_word_key_in_its_window_says_its_own() {
+    // Control+Left then Control+Right inside one window, each answered by a
+    // read of its own.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ echo hello", 100);
+    term.key(KeyKind::Caret(Unit::Word), 1000);
+    assert_eq!(
+        term.write("\x1b[5D", 1010),
+        says(vec![caret(0, Unit::Word, "hello")])
+    );
+    term.key(KeyKind::Caret(Unit::Word), 1200);
+    assert_eq!(
+        term.write("\x1b[5C", 1210),
+        says(vec![caret(0, Unit::Word, "")])
+    );
+}
+
+#[test]
+fn a_line_key_after_an_answered_line_key_in_its_window_says_its_own_line() {
+    // "Keys and their window": Up 156 milliseconds after the second Down,
+    // inside its window, both answered by reads of their own: each says
+    // the line it lands on, the marker following the caret, as NVDA does
+    // (`windows_terminal_marker_list`, run 2 of 2026-11-27).
+    let mut term = Term::new(20, 8, 10);
+    term.write(
+        "Pick a fruit:\r\n> apple\r\n  banana\r\n  cherry\x1b[2;3H",
+        100,
+    );
+    term.key(KeyKind::Caret(Unit::Line), 1000);
+    assert_eq!(
+        term.write("\x1b[2;1H  apple\x1b[3;1H> banana\x1b[3;3H", 1010),
+        step(
+            vec![caret(2, Unit::Line, "> banana")],
+            vec![withheld(1, Reason::LostText)],
+            None
+        )
+    );
+    term.key(KeyKind::Caret(Unit::Line), 1305);
+    assert_eq!(
+        term.write("\x1b[3;1H  banana\x1b[4;1H> cherry\x1b[4;3H", 1310),
+        step(
+            vec![caret(3, Unit::Line, "> cherry")],
+            vec![withheld(2, Reason::LostText)],
+            None
+        )
+    );
+    term.key(KeyKind::Caret(Unit::Line), 1461);
+    assert_eq!(
+        term.write("\x1b[4;1H  cherry\x1b[3;1H> banana\x1b[3;3H", 1476),
+        step(
+            vec![caret(2, Unit::Line, "> banana")],
+            vec![withheld(3, Reason::LostText)],
+            None
+        )
+    );
+}
+
+#[test]
+fn line_keys_repeated_with_no_read_between_say_the_line_they_end_on() {
+    // A held key repeating faster than the terminal is read: the one read
+    // after both says the line the caret ended on, once.
+    let mut term = Term::new(20, 8, 10);
+    term.write(
+        "Pick a fruit:\r\n> apple\r\n  banana\r\n  cherry\x1b[2;3H",
+        100,
+    );
+    term.key(KeyKind::Caret(Unit::Line), 1000);
+    term.key(KeyKind::Caret(Unit::Line), 1050);
+    assert_eq!(
+        term.write("\x1b[2;1H  apple\x1b[4;1H> cherry\x1b[4;3H", 1060),
+        step(
+            vec![caret(3, Unit::Line, "> cherry")],
+            vec![withheld(1, Reason::LostText)],
+            None
+        )
+    );
+}
+
+#[test]
 fn a_scroll_up_in_a_region_with_the_cursor_parked_back_says_only_the_new_row() {
     // "Keys and their window": as the cursor parked back on the status row after the
     // program scrolled the rows above it up a line and wrote the new last

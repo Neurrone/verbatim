@@ -86,13 +86,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the console host's change event for the typed `\` reached the listener about 250 ms late, and the output read was answered about 322 ms after the key, past the typing limit (`TYPED_LIMIT_MS`, 300 ms, in `crates/verbatim-text/src/terminal_reading.rs`). So the echo was taken as plain output and spoken with no symbol name. Every other key in the run was read within 6 ms.
   - Fix: none in Verbatim. The speech is the ruled behaviour (rule 20 of `books/dev/src/explanation/design/terminal-model.md`; Dickson kept the limit on 2026-11-27), so the failure is the runner's stall delaying the echo past the limit, a cause outside Verbatim, matched to the runner-stall entries above. The scenario is not loosened.
 
-## A line key inside the previous line key's window
-
-- `windows_terminal_marker_list` locally (run 2 of 3, 2026-11-27, at 06c0ce04)
-  - How: after Down Arrow ("> cherry"), Up Arrow said nothing where "> banana" was expected.
-  - Cause: Up reached the program 156 ms after the Down, inside its 300 ms window, so the two keys shared one window, and the shared window's caret step compares with the caret before the first key: Up's read shows the caret back on the "> banana" line it started from, so the keys "moved nothing" (rule 18, `crates/verbatim-text/src/terminal_reading.rs`), and the row's own change was withheld as a spinner. It happens when Up follows the spoken Down within 300 ms; the code before the key-window step behaved the same. This breaks the matched behaviour in `docs/parity/terminals.md`, "Line keys and lists a program draws".
-  - Fix: a key's caret step in a shared window compares with the caret its previous key's answer was spoken from, designed and built next. The scenario is not loosened.
-
 ## A key pressed as a terminal flood ends
 
 - `windows_terminal_line_key_flood` on GitHub's runner (run 45787264327, 2026-11-26, at 5b79a4e6; it passed at 4327da97 and 71cf8f3b)

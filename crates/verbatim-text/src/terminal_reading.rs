@@ -679,9 +679,10 @@ struct Keys {
     first_ms: u64,
     /// The keys, oldest first.
     kinds: Vec<KeyKind>,
-    /// The caret's line before them, mapped through each read: a caret back
-    /// there, on its line unchanged, is where the keys left it, whatever
-    /// the program did with its cursor as it drew in between ("Keys and their window").
+    /// The caret's line before them or, since the last caret key joined,
+    /// the caret the last read left, mapped through each read: a caret back there, on
+    /// its line unchanged, is where the keys left it, whatever the program
+    /// did with its cursor as it drew in between ("Keys and their window").
     origin: Option<Caret>,
     /// Whether a read in their window moved the review position to the
     /// caret.
@@ -904,7 +905,20 @@ impl TerminalReader {
             tag: key.tag,
         };
         let keys = match std::mem::replace(&mut self.keys, KeyWindow::Closed { newest: None }) {
-            KeyWindow::Open { newest: last, keys } if key.at_ms <= window_end(last.at_ms) => keys,
+            KeyWindow::Open {
+                newest: last,
+                mut keys,
+            } if key.at_ms <= window_end(last.at_ms) => {
+                // A caret key starts from the caret the last read left, as
+                // NVDA reads after each caret key on its own ("Keys and
+                // their window"); any other key joining the window starts
+                // where the first did, so a program's cursor parked back
+                // after its redraw stays silent.
+                if matches!(key.kind, KeyKind::Caret(_)) {
+                    keys.origin.clone_from(&self.screen.caret);
+                }
+                keys
+            }
             KeyWindow::Open { .. } | KeyWindow::Closed { .. } => Keys {
                 first_ms: key.at_ms,
                 kinds: Vec::new(),

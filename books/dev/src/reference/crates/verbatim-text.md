@@ -320,7 +320,7 @@ every new line goes to Core.
 - The keys' window, the one place its 300 milliseconds is judged: a
   `KeyWindow`, `Closed` with the newest key or none, or `Open` with the
   newest key and the window's keys (the first key's time, their kinds,
-  the caret before them, whether the review followed, and the typing not
+  the caret before them, or, since the last caret key joined, the caret the last read left, whether the review followed, and the typing not
   yet shown, pruned by `TYPED_LIMIT_MS` at each read). A read or key past
   the window's end closes it; the focus arriving closes it, and the focus
   leaving drops the newest key too. Core asks it two things:
