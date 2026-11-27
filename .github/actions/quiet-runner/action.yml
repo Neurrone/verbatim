@@ -1,0 +1,27 @@
+# Environment preparation shared by the ci, ci-arm64 and e2e jobs of
+# ci.yml, not a workaround in the harness: the runner image's own
+# background work stalls the runner, and windows and tests time out
+# while it runs. In every stall whose load was recorded on 2026-11-27 the
+# busiest process was the svchost.exe running the Storage Service (runs
+# 45944007285, 46010625495, 46012487187), and with that stopped, Windows
+# Update's orchestrator ran with the disks' queue at 3 (run 46024262485).
+# Each service is disabled, so nothing restarts it during the job, and
+# stopped (Dickson, 2026-11-27; docs/flaky-tests.md). A service the image
+# lacks is skipped and named in the log.
+name: Quiet the runner
+description: Disables and stops the runner image's Storage Service and Windows Update services.
+runs:
+  using: composite
+  steps:
+    - name: Stop the runner image's Storage Service and Windows Update
+      shell: pwsh
+      run: |
+        foreach ($name in 'StorSvc', 'UsoSvc', 'wuauserv') {
+          $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+          if (-not $service) { Write-Host "$name: not on this image"; continue }
+          Set-Service -Name $name -StartupType Disabled
+          Stop-Service -Name $name -Force
+          $service = Get-Service -Name $name
+          if ($service.Status -ne 'Stopped') { throw "$name is $($service.Status), not stopped" }
+          Write-Host "$name: stopped and disabled"
+        }
