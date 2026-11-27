@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader};
 use std::os::windows::io::AsRawHandle;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::outpost::{Focused, OutpostUnderTest};
 use verbatim_model::{Role, State};
@@ -30,14 +30,15 @@ use verbatim_uia_rops::{
     Ancestry, Error, FailedHop, FocusAncestry, FocusAncestryFn, FocusQuery, Status, focus_ancestry,
     focus_ancestry_classic, focus_ancestry_remote,
 };
-use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
+use windows::Win32::Foundation::{E_POINTER, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
 use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation2, IUIAutomationElement, TreeScope_Descendants, UIA_E_ELEMENTNOTAVAILABLE,
-    UIA_E_TIMEOUT, UIA_LegacyIAccessibleStatePropertyId, UIA_NamePropertyId,
+    AccessibleObjectFromWindow, IAccessible, IUIAutomation2, IUIAutomationElement,
+    TreeScope_Descendants, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT,
+    UIA_LegacyIAccessibleStatePropertyId, UIA_NamePropertyId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, PostMessageW, WM_CLOSE};
 use windows::core::{BSTR, Interface};
 
 const BOTH: [(&str, FocusAncestryFn); 2] = [
@@ -1388,6 +1389,27 @@ impl Drop for FormsMenu {
     }
 }
 
+/// Gets `window`'s MSAA client object, as UI Automation's MSAA proxy does
+/// first, and releases it at once.
+fn client_object(window: HWND) -> windows::core::Result<()> {
+    let mut object: Option<IAccessible> = None;
+    // SAFETY: any window handle, a stale one failing the call; the out
+    // pointer receives an `IAccessible` or stays `None`, and is dropped,
+    // releasing it, when this returns.
+    unsafe {
+        AccessibleObjectFromWindow(
+            window,
+            OBJID_CLIENT.0.cast_unsigned(),
+            &IAccessible::IID,
+            (&raw mut object).cast::<*mut std::ffi::c_void>(),
+        )
+    }?;
+    match object {
+        Some(_) => Ok(()),
+        None => Err(windows::core::Error::from(E_POINTER)),
+    }
+}
+
 /// A Windows Forms menu item, which no pattern makes checkable, says it is
 /// checked only in its legacy MSAA state. Its element can be imported into
 /// a remote operation (found on 2026-10-17, Windows PowerShell 5.1's
@@ -1400,9 +1422,28 @@ fn a_windows_forms_menu_item_is_checked_from_the_remote_read() {
     let title = common::unique_title("mockapp-rops-forms-menu");
     let forms = FormsMenu::open(&title);
     let uia = Uia::new().expect("Uia::new");
-    let root = uia
-        .window_live(forms.hwnd.0 as isize)
-        .expect("the form's window element");
+    // The program has no native UI Automation provider (it answers
+    // `UiaRootObjectId` with 0), so UI Automation reads it through its MSAA
+    // proxy. On GitHub's runners the first lookup has run past UI
+    // Automation's timeout (`docs/flaky-tests.md`); which step is slow is
+    // not yet known, so the window's first MSAA object and then the lookup
+    // are each timed, and a failure names both. Neither is part of what
+    // the test asserts, and both come before it.
+    let started = Instant::now();
+    let msaa = client_object(forms.hwnd);
+    let msaa_took = started.elapsed();
+    let started = Instant::now();
+    let root = uia.window_live(forms.hwnd.0 as isize);
+    let lookup_took = started.elapsed();
+    let root = match (msaa, root) {
+        (Ok(()), Ok(root)) => root,
+        (msaa, root) => panic!(
+            "the form's window was not read: its MSAA client object took {msaa_took:?} ({:?}), \
+             then its UI Automation element {lookup_took:?} ({:?})",
+            msaa,
+            root.map(|_| ())
+        ),
+    };
     let value = VARIANT::from(BSTR::from("View"));
     let condition = uia
         .property_condition(UIA_NamePropertyId, &value)
