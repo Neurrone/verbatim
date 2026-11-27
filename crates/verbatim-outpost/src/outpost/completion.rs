@@ -169,11 +169,28 @@ fn find(
     if !focus {
         return (None, window_element);
     }
-    let element = read::focused_element_in(context, client, read::FocusRead::NoRoute).ok();
-    (
-        element.filter(|element| element.runtime_id() == runtime_id),
-        window_element,
-    )
+    let element = match read::focused_element_in(context, client, read::FocusRead::NoRoute) {
+        Ok(element) => {
+            let read = element.runtime_id();
+            let taken = read == runtime_id;
+            tracing::debug!(
+                ?read,
+                focus = ?runtime_id,
+                taken,
+                "the application's focused element read for a focus no route found"
+            );
+            taken.then_some(element)
+        }
+        Err(miss) => {
+            tracing::debug!(
+                ?miss,
+                focus = ?runtime_id,
+                "the application's focused element read for a focus no route found answered none"
+            );
+            None
+        }
+    };
+    (element, window_element)
 }
 
 /// The route to the ancestor Core already knows that the listener's walk
