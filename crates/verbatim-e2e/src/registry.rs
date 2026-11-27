@@ -411,7 +411,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(owned_dialog_across_processes, Runs),
     suite!(lock_key_announcements, Runs),
     suite!(quick_link_menu, Runs),
-    suite!(explorer_folder_window, Runs),
+    suite!(explorer_folder_window, Runs)
+        .local_only("On GitHub's runner the new explorer.exe folder window stops answering or its list item's focus is never delivered: in run 46024262485 its interface thread waited on a COM call into the RPC service while the disks' queue stood at 3 and Windows Update's orchestrator ran, with the Storage Service already stopped. The wait is the runner's, not Verbatim's (`docs/flaky-tests.md`). It runs there again once Dickson rules on holding off the runner image's update work, or the runner stops stalling."),
     suite!(settings_dialog_keys, Refused(OWN_GUI)),
     suite!(settings_combo_box_expanded, Runs)
         .local_only("The runner's Date and time page opens with its focus on its location settings link, not the Region button. It runs there again once the runner's Settings opens it on the Region button."),

@@ -147,10 +147,10 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 ## File Explorer's folder window not responding on GitHub's runner
 
-- Scenario: `explorer_folder_window` (GitHub runs 42654703245, 44123231466 and 44344991044; locally on 2026-10-31). It was local-only for this reason until 5 of 5 dispatched runs passed (run 45920550584, 2026-11-27); it runs on GitHub again (Claude, 2026-11-27), because a recurrence there now records Verbatim's dump and the runner's load, the evidence this entry lacks.
+- Scenario: `explorer_folder_window` (GitHub runs 42654703245, 44123231466 and 44344991044; locally on 2026-10-31; run 46024262485, 2026-11-27). Local-only again (Claude, 2026-11-27): it went back to GitHub after 5 of 5 dispatched runs passed (run 45920550584) and failed there twice the same day, once on an undelivered focus (the entry "UI Automation focus never delivered on GitHub's runner") and once on this hang.
 - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, stops answering and Verbatim plays the application-not-responding sound.
 - Cause: not yet named. In run 44344991044, `not-responding-wait-chains.txt` shows both `dwm.exe`'s and the new `explorer.exe`'s window threads blocked, with no cycle; the wait chain does not show what Explorer waits on. A link to the Desktop Window Manager rests on two runs and one wait chain. The harness does not wait for the manager (Dickson, 2026-10-26).
-- Fix: none yet. The next failure's `runner-load.txt` and wait chains are read for what Explorer's thread waits on; a wait of Verbatim's is fixed, and one of the runner's goes to Dickson.
+- Fix: none in Verbatim. In run 46024262485, with the Storage Service already stopped, the wait chain showed Explorer's interface thread blocked on a COM call into svchost.exe's RPC service (RpcSs) and dwm.exe's thread blocked too, the disks' queue at 3, and Windows Update's orchestrator running (MoUsoCoreWorker.exe, UsoClient.exe): the wait is the runner's. Whether the jobs also hold off the update orchestrator is Dickson's.
 
 ## Scenarios local-only for the runner's image
 
