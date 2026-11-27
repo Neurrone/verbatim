@@ -85,6 +85,10 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the same runner stall, the third that named a service and the third with the `svchost.exe` running `StorSvc` busiest, at 19.5% of the processors, the processor 32.8% busy and the disks' queue 1.82 on average (`runner-load.txt`).
   - Fix: as above.
 
+- Two unit tests in the `ci` job on GitHub's runner (run 46021822336, 2026-11-27, at 66f9d541): verbatim-agent `diagnostics::tests::a_blocked_process_s_dump_holds_each_thread_s_stack_and_not_its_memory` (its wait ended `TimedOut` where `Signalled` was expected) and verbatim-synth-host `a_cancelled_utterance_ends_without_the_hosts_answer_and_the_host_carries_on` ("the synthesizer host sent nothing for 10s").
+  - Cause: both are time limits run out on the runner, the family above; neither test touches the change pushed. The `ci` job records no machine load, and it does not stop the Storage Service, which only the e2e job does.
+  - Fix: as above, if Dickson extends the Storage Service step to the `ci` jobs.
+
 - `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci` on x64 too (run 46010625495, the run above): UIA_E_TIMEOUT reading the form's window element, as below.
 
 - `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci-arm64` (run 45884584255, the `wpf_password` run's)
