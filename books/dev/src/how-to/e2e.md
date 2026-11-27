@@ -467,7 +467,9 @@ repeat=<n>`, the workflow runs its `changes` and `plan` jobs and its `e2e` job, 
 one per group and without the 11-minute limit, which runs that one
 scenario n times, each in its own test process, and uploads every run's copy from the history (below) as the
 `verbatim-e2e-history` artifact, so an intermittent failure on GitHub's
-runner can be measured without a push for each run. The job fails before
+runner can be measured without a push for each run. It sets
+`VERBATIM_E2E_SKIP_LOCAL_ONLY=0`, so a local-only scenario runs too: that
+is how its reason is tested on the runner. The job fails before
 any run when n is below 1 or the name does not list exactly one test,
 since a misspelt name runs nothing and passes.
 

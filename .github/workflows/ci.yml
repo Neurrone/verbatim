@@ -406,6 +406,8 @@ jobs:
       # (the registry's local_only flag), which need a Windows 11 desktop
       # the runner's Windows Server is not; VERBATIM_E2E_SKIP_LOCAL_ONLY
       # makes one that ran anyway fail (books/dev/src/how-to/e2e.md).
+      # A run started by hand for one scenario leaves it 0, since that run
+      # is how a local-only scenario's reason is tested on the runner.
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)
@@ -422,7 +424,7 @@ jobs:
         timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && !inputs.coverage && 360 || 11 }}
         env:
           VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
-          VERBATIM_E2E_SKIP_LOCAL_ONLY: "1"
+          VERBATIM_E2E_SKIP_LOCAL_ONLY: ${{ inputs.scenario != '' && '0' || '1' }}
           E2E_SCENARIO: ${{ inputs.scenario }}
           E2E_REPEAT: ${{ inputs.repeat }}
           E2E_GROUP: ${{ matrix.group }}
