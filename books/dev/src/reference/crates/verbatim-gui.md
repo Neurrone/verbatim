@@ -224,7 +224,12 @@ injected first satisfies the heuristic directly (confirmed live: roughly
 fallback the code still keeps for the case even the tap does not help).
 `VK_MENU` was tried and rejected as the nudge — a lone Alt press activates
 menu bars and bounces foreground straight back. The frame hides again
-after the menu closes or the last dialog is dismissed.
+after the menu closes or the last dialog is dismissed, NVDA's postPopup;
+when the foreground window is then not visible, or there is none, the
+frame is shown and hidden once more (`foreground::foreground_visible`),
+as NVDA does, because a closing dialog makes its owner, the frame, the
+foreground just before the frame hides, and the previous application
+could then take the foreground with no foreground event.
 
 The settings dialog mirrors NVDA's shape: a labeled single-column report
 list of categories on the left, a lazily built page on the right, OK,

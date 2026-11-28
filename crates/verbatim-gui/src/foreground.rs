@@ -21,14 +21,25 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_CONTROL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SW_SHOW, SetForegroundWindow,
-    ShowWindow,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible, SW_SHOW,
+    SetForegroundWindow, ShowWindow,
 };
 
 /// The native window handle the C++ layer reported as an integer, or
 /// `None` for 0, the window not existing.
 pub(crate) fn hwnd_of(handle: usize) -> Option<HWND> {
     (handle != 0).then(|| HWND(std::ptr::with_exposed_provenance_mut::<c_void>(handle)))
+}
+
+/// Whether the current foreground window is visible: false when there is
+/// none, or when it is a window that has been hidden, such as the hidden
+/// frame left foreground as it hid. NVDA's `postPopup` asks this after
+/// every popup.
+pub(crate) fn foreground_visible() -> bool {
+    // SAFETY: no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    // SAFETY: tolerates any handle, answering false for none or a gone one.
+    !foreground.is_invalid() && unsafe { IsWindowVisible(foreground) }.as_bool()
 }
 
 /// Injects a bare `VK_CONTROL` down-then-up tap, satisfying Windows'

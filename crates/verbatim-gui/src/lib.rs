@@ -412,9 +412,24 @@ impl GuiCore {
     /// Cleans up after a popup, NVDA's `postPopup`: hide the frame again so
     /// we keep no visible window and the foreground falls back to the
     /// previous application — unless the lifecycle says a dialog still
-    /// needs the frame as its visible owner.
+    /// needs the frame as its visible owner, when nothing is done.
+    ///
+    /// When the foreground is then a window that is not visible, or none,
+    /// the frame is shown and hidden once more, as NVDA does: a closing
+    /// dialog can make its owner, the frame, the foreground just before
+    /// the frame hides, and the previous application can then become
+    /// foreground with no foreground event, so its focus is never read;
+    /// showing and hiding the frame hands the foreground back with one.
     fn post_popup(&self, after: Frame) {
-        if after == Frame::Hide {
+        if after != Frame::Hide {
+            return;
+        }
+        self.gui.hide_frame();
+        if !foreground::foreground_visible() {
+            tracing::info!(
+                "the foreground is not visible after a popup; showing and hiding the frame to return it"
+            );
+            self.gui.show_frame();
             self.gui.hide_frame();
         }
     }
