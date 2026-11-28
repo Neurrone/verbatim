@@ -21,24 +21,42 @@ applications build is built (2026-11-07). The focus pipeline rework's
 third build, the state models, the caret and selection rework and M4.2
 are built (Dickson, 2026-11-10). Next, in this order (Dickson,
 2026-11-05, with the misc fixes added on 2026-11-10, "Readers tell,
-Core asks" placed first on 2026-11-13, and the simplification placed
-before everything on 2026-11-20):
+Core asks" placed first on 2026-11-13, the simplification placed
+before everything on 2026-11-20, and the rewrite placed first on
+2026-11-28):
 
-1. the simplification, below, with a complete freeze on new
+1. the rewrite, below, first (Dickson, 2026-11-28);
+2. the simplification, below, with a complete freeze on new
    functionality until its test of done is met (Dickson, 2026-11-20);
-2. "Readers tell, Core asks", below, whose three builds are built and
+3. "Readers tell, Core asks", below, whose three builds are built and
    whose clearing up the simplification takes in;
-3. the exact replay of a paused entry, below (Dickson, 2026-11-19);
-4. the misc fixes below, whose last item lets M5's build A start;
-5. M5;
-6. M6;
-7. M4.3;
-8. M4.8 (Guardian) and M4.7 (Containment);
-9. M4.9 (Lints and unsafe);
-10. M6.2's remaining items, with the rest after.
+4. the exact replay of a paused entry, below (Dickson, 2026-11-19);
+5. the misc fixes below, whose last item lets M5's build A start;
+6. M5;
+7. M6;
+8. M4.3;
+9. M4.8 (Guardian) and M4.7 (Containment);
+10. M4.9 (Lints and unsafe);
+11. M6.2's remaining items, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
+
+## The rewrite
+
+First, before everything else (Dickson, 2026-11-28). Verbatim is rewritten on a branch of this repository, not built on today's foundations; the old Core and reader crates are removed from the branch so their patterns are not copied, and leaf crates are kept only after a check. The multi-process split stays; everything else follows the rewrite's design, [`docs/design/rewrite/design.md`](design/rewrite/design.md), and its extensions design, [`docs/design/rewrite/extensions-design.md`](design/rewrite/extensions-design.md), whose decisions record what Dickson approved and what is provisional. It includes M5: behaviour an NVDA add-on could implement is a built-in extension, and the hot path stays in Core. Core is GPL and may port NVDA's code.
+
+The prototype, in order, each step with what it proves:
+
+1. The model, Core's sealed records, the queue and the build checks from the first commit.
+2. The simulator, with the readers as reducers behind the platform interface.
+3. World capture on one real application, with calibration.
+4. Headless NVDA on that capture, with the comparison.
+5. The measurement gate on sealed historical bugs; the prototype goes on only if it passes.
+6. The rest of the focus slice as real processes, with live API tests, end-to-end scenarios and the measured cost of real roadmap features.
+7. The first built-in extensions: Report title, then File Explorer's tab switch.
+
+After the prototype, each area of today's product is ported in turn, each passing its own gate.
 
 ## The simplification
 

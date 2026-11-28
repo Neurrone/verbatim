@@ -1,0 +1,206 @@
+﻿initInprocManagerThreadIfNeeded: 1
+appModule: winword appModules.winword binding: True
+document text: 'Quarterly report\rSales rose by twelve percent this quarter. Costs fell. Did margins hold? Yes, they did.\rOutlook\rWe expect growth to continue through the next two quarters, as orders remain strong.\r'
+getTextInRange para 2, flags 0: (0, '<control wdStoryType="1"><text >Sales </text><text >rose </text><text >by </text><text >twelve </text><text >pe</text></control>')
+getTextInRange para 1 with headings and font attributes: (0, '<control wdStoryType="1"><control role="heading" level="1" collapsedState="false" _startOfNode="1" _endOfNode="1" ><text >Quarterly </text><text >report</text><text >\r</text></control></control>')
+getTextInRange para 2 font attributes, style, page, line number: (0, '<control wdStoryType="1"><text page-number="1" line-number="2" section-number="1" style="Normal" >Sales </text><text page-number="1" line-number="2" section-number="1" style="Normal" >rose </text><text page-number="1" line-number="2" section-number="1" style="Normal" >by </text><text page-number="1" line-number="2" section-number="1" style="Normal" bold="1" >twelve </text><text page-number="1" line-number="2" section-number="1" style="Normal" bold="1" >percent </text><text page-number="1" line-number="2" section-number="1" style="Normal" >this </text><text page-number="1" line-number="2" section-number="1" style="Normal" >quarter</text><text page-number="1" line-number="2" section-number="1" style="Normal" >. </text><text page-number="1" line-number="2" section-number="1" style="Normal" >Costs </text><text page-number="1" line-number="2" section-number="1" style="Normal" >fell</text><text page-number="1" line-number="2" section-number="1" style="Normal" >. </text><text page-number="1" line-number="2" section-number="1" style="Normal" >Did </text><text page-number="1" line-number="2" section-number="1" style="Normal" >margins </text><text page-number="1" line-number="2" section-number="1" style="Normal" >hold</text><text page-number="1" line-number="2" section-number="1" style="Normal" >? </text><text page-number="1" line-number="2" section-number="1" style="Normal" italic="1" >Yes</text><text page-number="1" line-number="2" section-number="1" style="Normal" >, </text><text page-number="1" line-number="2" section-number="1" style="Normal" >they </text><text page-number="1" line-number="2" section-number="1" style="Normal" >did</text><text page-number="1" line-number="2" section-number="1" style="Normal" >.</text><text page-number="1" line-number="2" section-number="1" style="Normal" >\r</text></control>')
+selection after getTextInRange (unchanged expected): (20, 20)
+expandToLine(0): (0, 0, 17) line text: 'Quarterly report\r'
+expandToLine(20): (0, 17, 51) line text: 'Sales rose by twelve percent this '
+expandToLine(60): (0, 51, 90) line text: 'quarter. Costs fell. Did margins hold? '
+expandToLine(100): (0, 90, 105) line text: 'Yes, they did.\r'
+selection after expandToLine: (20, 20) screenUpdating toggles: [False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True]
+moveByLine(20, back=0): (0, 51)
+moveByLine(60, back=0): (0, 90)
+moveByLine(60, back=1): (0, 51)
+moveByLine(0, back=1): (0, 0)
+WM_GETOBJECT OBJID_NATIVEOM answered: 15
+=== members called by the native code: 46
+   ('Application', 'ScreenUpdating=') 30
+   ('Coll', 'Count') 6
+   ('Coll', 'Item') 70
+   ('Document', 'Styles') 1
+   ('Font', 'Bold') 24
+   ('Font', 'DoubleStrikeThrough') 24
+   ('Font', 'Hidden') 24
+   ('Font', 'Italic') 24
+   ('Font', 'Strikethrough') 24
+   ('Font', 'Underline') 24
+   ('Paragraph', 'Collapsed_State') 1
+   ('Paragraph', 'Range') 3
+   ('Paragraph', 'Style') 1
+   ('Selection', 'End') 8
+   ('Selection', 'EndOf') 8
+   ('Selection', 'Move') 4
+   ('Selection', 'Range') 15
+   ('Selection', 'SetRange') 20
+   ('Selection', 'Start') 12
+   ('Selection', 'StartIsActive') 12
+   ('Selection', 'StartIsActive=') 12
+   ('Selection', 'StartOf') 8
+   ('Style', 'NameLocal') 31
+   ('Style', 'Parent') 1
+   ('WRange', 'Collapse') 32
+   ('WRange', 'ContentControls') 29
+   ('WRange', 'Duplicate') 3
+   ('WRange', 'End') 30
+   ('WRange', 'End=') 1
+   ('WRange', 'Expand') 3
+   ('WRange', 'Fields') 3
+   ('WRange', 'Font') 24
+   ('WRange', 'FormFields') 29
+   ('WRange', 'Information') 3
+   ('WRange', 'InlineShapes') 3
+   ('WRange', 'MoveEnd') 29
+   ('WRange', 'PageSetup') 1
+   ('WRange', 'Paragraphs') 3
+   ('WRange', 'Select') 12
+   ('WRange', 'SetRange') 3
+   ('WRange', 'Start') 1
+   ('WRange', 'StoryType') 3
+   ('WRange', 'Style') 21
+   ('WRange', 'Text') 29
+   ('Window', 'Application') 15
+   ('Window', 'Selection') 15
+=== misses {('WRange', 'PageSetup: no handler'): 1}
+=== NVDA log
+   ERROR nvda: setSynth failed for oneCore
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\oneCore.py", line 246, in __init__
+    self._ocSpeechToken.value = self._dll.ocSpeech_initialize(self._callbackInst)
+                 
+   ERROR nvda: setSynth failed for espeak
+thDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\espeak.py", line 78, in __init__
+    _espeak.initialize(self._onIndexReached)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDrivers\_espeak.py", line 360, in initialize
+
+   ERROR nvda: No VoiceSpeechDictDefinition found in _speechDictDefinitions. Speech dictionaries may not have been initialized.
+   ERROR nvda: setSynth failed for silence
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 495, in getSynthInstance
+    newSynth.initSettings()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 381, in initSettings
+    changeVoice(self, voice)
+    ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\Dicks
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+IAccessible object for the window: (<class 'NVDAObjects.Dynamic_WinwordWordDocumentWordDocumentIAccessibleWindowNVDAObject'>, <class 'appModules.winword.WinwordWordDocument'>, <class 'NVDAObjects.IAccessible.winword.WordDocument'>) _WwG
+NVDA object: Dynamic_WinwordWordDocumentWordDocumentIAccessibleWindowNVDAObject documentWindowHandle == hwnd: True
+line at caret 0: ['heading    level 1  page 1  section 1  Quarterly report  \n']
+line at caret 20: ['Sales rose by twelve percent this ']
+line at caret 60: ['quarter. Costs fell. Did margins hold? ']
+next line 1 (moved 1): ['quarter. Costs fell. Did margins hold? ']
+next line 2 (moved 1): ['Yes, they did.  \n']
+next line 3 (moved 1): ['heading    level 2  Outlook  \n']
+next line 4 (moved 1): ['We expect growth to continue through ']
+sentence 1: ['Sales rose by twelve percent this quarter. ']
+sentence 2: ['Costs fell. ']
+sentence 3: ['Did margins hold? ']
+sentence 4: ['Yes, they did.  \n']
+word at 20: ['Sales ']
+paragraph at 0: ['heading    level 1  Quarterly report  \n']
+=== stage 2 members called: 48
+   ('Application', 'IsSandbox') 12
+   ('Application', 'ScreenUpdating=') 48
+   ('Coll', 'Count') 69
+   ('Coll', 'Item') 158
+   ('Document', 'Range') 4
+   ('ListFormat', 'ListString') 13
+   ('Paragraph', 'Collapsed_State') 3
+   ('Paragraph', 'Range') 13
+   ('Paragraph', 'Style') 13
+   ('Selection', 'End') 7
+   ('Selection', 'EndOf') 7
+   ('Selection', 'Move') 4
+   ('Selection', 'Range') 31
+   ('Selection', 'SetRange') 18
+   ('Selection', 'Start') 11
+   ('Selection', 'StartIsActive') 11
+   ('Selection', 'StartIsActive=') 11
+   ('Selection', 'StartOf') 7
+   ('Style', 'NameLocal') 13
+   ('WRange', 'Application') 12
+   ('WRange', 'Collapse') 86
+   ('WRange', 'Comments') 13
+   ('WRange', 'ContentControls') 66
+   ('WRange', 'Duplicate') 21
+   ('WRange', 'End') 99
+   ('WRange', 'Expand') 19
+   ('WRange', 'Fields') 13
+   ('WRange', 'FormFields') 66
+   ('WRange', 'HighlightColorIndex') 66
+   ('WRange', 'Information') 26
+   ('WRange', 'InlineShapes') 13
+   ('WRange', 'LanguageID') 66
+   ('WRange', 'ListFormat') 13
+   ('WRange', 'Move') 4
+   ('WRange', 'MoveEnd') 66
+   ('WRange', 'PageSetup') 13
+   ('WRange', 'Paragraphs') 13
+   ('WRange', 'Revisions') 13
+   ('WRange', 'Select') 11
+   ('WRange', 'SetRange') 24
+   ('WRange', 'SpellingErrors') 12
+   ('WRange', 'Start') 44
+   ('WRange', 'StoryType') 13
+   ('WRange', 'Tables') 20
+   ('WRange', 'Text') 66
+   ('Window', 'Application') 24
+   ('Window', 'Document') 1
+   ('Window', 'Selection') 25
+=== misses {('WRange', 'PageSetup: no handler'): 14, ('Window', 'name:view'): 1, ('Coll', 'dispid:5:flags2'): 2}
+=== patches ['appModuleHandler.getAppNameFromProcessID: this process is named winword', 'NVDAHelper: callbacks wired and nvdaHelperLocal_initialize; nvdaHelperRemote loaded, only initInprocManagerThreadIfNeeded called', 'watchdog.cancellableExecute: a direct call (no watchdog thread)']
+=== NVDA log (from stage 2)
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+
+   ERROR nvda: Thread 2732, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147352573
+

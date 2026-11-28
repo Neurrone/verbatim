@@ -1,0 +1,50 @@
+appModule: testapp in-process binding: True
+real input context on the app thread: True
+=== live pass: real WM_IME_* through nvdaHelperRemote's hooks
+IME closes (Japanese): speech ['IME closed']
+      boundary IMEOpenStatusUpdate(0,)
+IME opens (Japanese): speech ['IME opened']
+      boundary IMEOpenStatusUpdate(1,)
+conversion mode to hiragana: speech ['hiragana']
+      boundary inputConversionModeUpdate(0, 9, 1041)
+type n: speech ['ｎ']
+      boundary inputCompositionUpdate('ｎ', 1, 1, 0)
+type i: speech ['に']
+      boundary inputCompositionUpdate('に', 1, 1, 0)
+type h o n: speech ['ほん']
+      boundary inputCompositionUpdate('にほん', 3, 3, 0)
+space: candidates open: speech ['1 日, 本, 2 二, 本, 3 に, ほ, ん, ', '1 日, 本']
+      boundary inputCandidateListUpdate('日本\n二本\nにほん', 0, 'IMJP15.IME')
+space: next candidate: speech ['2 二, 本']
+      boundary inputCandidateListUpdate('日本\n二本\nにほん', 1, 'IMJP15.IME')
+enter: commit: speech ['Note  window', '二本']
+      boundary inputCandidateListUpdate('', -1, '')
+      boundary inputCompositionUpdate('二本', -1, -1, 0)
+=== replay pass: the recorded calls into NVDA's controller callbacks
+IME closes (Japanese): speech ['IME closed']
+IME opens (Japanese): speech ['IME opened']
+conversion mode to hiragana: speech ['hiragana']
+type n: speech ['ｎ']
+type i: speech ['に']
+type h o n: speech ['ほん']
+space: candidates open: speech ['1 日, 本, 2 二, 本, 3 に, ほ, ん, ', '1 日, 本']
+space: next candidate: speech ['2 二, 本']
+enter: commit: speech ['Note  window', '二本']
+replay matches live: True
+stand-in IMM32 calls: 20 ['ImmGetCandidateListCountW', 'ImmGetCandidateListW', 'ImmGetCompositionStringW', 'ImmGetConversionStatus', 'ImmGetOpenStatus']
+=== patches
+   appModuleHandler.getAppNameFromProcessID: this process is named testapp
+   NVDAHelper: callbacks wired as initialize does, nvdaHelperLocal_initialize; remote loaded, no injection_initialize
+   winUser.isWindowVisible: the test windows count as visible (they are never shown)
+   initInprocManagerThreadIfNeeded (this process only): 1
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetCompositionStringW redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetCandidateListCountW redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetCandidateListW redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetOpenStatus redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetConversionStatus redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetProperty redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of ImmGetIMEFileNameW redirected: ok
+   nvdaHelperRemote.dll (Files\NVDA\lib\alpha-58022,732d1ce2\x64\nvdaHelperRemote.dll) import of GetKeyboardLayout redirected: ok
+   controller callbacks for IME, language and typed characters wrapped to record their arguments, then call NVDA's own
+   NVDA focus set to the test window; Desktop.objectWithFocus answers it (the hidden window is never the OS foreground)
+=== NVDA log (warnings and above)

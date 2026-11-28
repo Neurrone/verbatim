@@ -1,0 +1,87 @@
+﻿foreground object: <NVDAObjects.IAccessible.ContentGenericClient object at 0x000001CBBCF4AB10> (<class 'NVDAObjects.IAccessible.ContentGenericClient'>, <class 'NVDAObjects.IAccessible.IAccessible'>, <class 'NVDAObjects.window.Window'>)
+focus ancestors: ['Desktop:Desktop', 'GenericWindow:verbatim-e2e-review-words.txt - Notepad', 'ContentGenericClient:verbatim-e2e-review-words.txt - Notepad']
+focused object classes: ['Dynamic_EditableTextWithAutoSelectDetectionUIAWindowNVDAObject', 'EditableTextWithAutoSelectDetection', 'EditableText', 'EditableTextWithSuggestions', 'InputFieldWithSuggestions', 'EditableTextBase', 'EditableText', 'UIA']
+=== speech (oracle vs capture)
+foreground on the MSAA frame, then UIA focus on the document: ['verbatim-e 2e-review-words dot txt - Notepad', 'Text editor  document  Fruit   Color   Price']  SAME
+control+home: ['Fruit   Color   Price']  SAME
+numpad5: ['Fruit']  SAME
+numpad6: ['Color']  SAME
+numpad6: ['Price']  SAME
+numpad6: ['carriage return']  SAME
+numpad6: ['Apple']  SAME
+numpad6: ['red']  SAME
+numpad4: ['Apple']  SAME
+numpad4: ['carriage return']  SAME
+numpad4: ['Price']  SAME
+numpad4: ['Color']  SAME
+numpad4: ['Fruit']  SAME
+numpad4: ['Top', 'Fruit']  SAME
+numpad4: ['Top', 'Fruit']  SAME
+control+home: ['Fruit   Color   Price']  SAME
+shift+numpad1: ['F']  SAME
+downarrow: ['Apple   red 1.20']  SAME
+numpad4: ['carriage return']  SAME
+numpad4: ['Price']  SAME
+numpad4: ['Color']  SAME
+shift+numpad9: ['blank']  SAME
+numpad7: ['Banana  yellow  0.50']  SAME
+control+end: ['blank']  SAME
+numpad6: ['Bottom', 'carriage return']  SAME
+control+home (rule): ['Fruit   Color   Price']  SAME
+numpad3 (rule): ['r']  SAME
+numpad3 (rule): ['u']  SAME
+numpad1 (rule): ['r']  SAME
+numpad2 (rule): ['r']  SAME
+numpad9 (rule): ['Apple   red 1.20']  SAME
+numpad8 (rule): ['Apple   red 1.20']  SAME
+shift+numpad3 (rule): ['carriage return']  SAME
+uparrow (rule): ['Fruit   Color   Price']  SAME
+downarrow (rule): ['Apple   red 1.20']  SAME
+downarrow (rule): ['Fig purple']  SAME
+shift+numpad7 (rule): ['Fruit   Color   Price']  SAME
+numpad7 (rule): ['Top', 'Fruit   Color   Price']  SAME
+=== 38 of 38 steps the same
+=== synthesizer text after symbol processing (last 6)
+   'Fruit   Color   Price  '
+   'Apple   red 1.20  '
+   'Fig purple  '
+   'Fruit   Color   Price  '
+   'Top  '
+   'Fruit   Color   Price  '
+=== misses
+=== members called
+       3 IUIAutomation.IntSafeArrayToNativeArray
+       4 IUIAutomationTextPattern.DocumentRange
+       1 IUIAutomationTextRange.GetAttributeValue(IsReadOnly)
+      44 IUIAutomationTextPattern.GetSelection
+      44 IUIAutomationTextRangeArray.Length
+      44 IUIAutomationTextRangeArray.GetElement
+     160 IUIAutomationTextRange.Clone
+      11 IUIAutomationTextRange.CompareEndpoints
+      22 IUIAutomationTextRange.ExpandToEnclosingUnit(line)
+      69 IUIAutomationTextRange.MoveEndpointByRange
+       1 IUIAutomationTextRange.MoveEndpointByUnit(character)
+      38 IUIAutomationTextRange3.GetChildrenBuildCache
+      76 IUIAutomationElementArray.Length
+      38 IUIAutomationTextRange3.GetEnclosingElementBuildCache
+      38 IUIAutomationTextRange.GetText
+      38 IUIAutomationTextRange3.GetAttributeValues(AnnotationTypes,Culture,Link,StyleId)
+       3 gesture.send(control+home)
+      34 IUIAutomationTextRange.Compare
+      27 IUIAutomationTextRange.ExpandToEnclosingUnit(word)
+      16 IUIAutomationTextRange.Move(word)
+       9 IUIAutomationTextRange.ExpandToEnclosingUnit(character)
+       3 gesture.send(downarrow)
+       3 IUIAutomationTextRange.Move(line)
+       1 gesture.send(control+end)
+       4 IUIAutomationTextRange.Move(character)
+       1 gesture.send(uparrow)
+=== patches
+   config UIA.enhancedEventProcessing = disabled (native rate limiter sits before the injection point)
+   winKernel.LCIDToLocaleName: the real call (a locale table lookup, no application state)
+   appModuleHandler.getAppNameFromProcessID / getProcessHandleFromProcessId: from the world's process table
+   UIAHandler.UIARemote.initialize: the real one (it only checks the Windows version)
+   recording synthesizer: eSpeak NG's supportedCommands and notifications
+   recording synthesizer: supports every language, as the capture's eSpeak NG does English
+   core.requestPump: recorded; the oracle pumps IAccessibleHandler itself
+=== NVDA log (warnings and above)

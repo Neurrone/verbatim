@@ -1,0 +1,17 @@
+appModule: testapp in-process binding: True
+window location (screen): RectLTWH(left=200, top=150, width=500, height=300)
+DisplayModelTextInfo text: 'File  Edit  View  HelpName: Report.txtSize: 3 KB\nStatus: ready'
+lines: ['File  Edit  View  Help', 'Name: Report.txt', 'Size: 3 KB', '\n', 'Status: ready', 'Status: ready']
+first word of line 2: 'Name' rect: [RectLTWH(left=265, top=276, width=35, height=17)]
+speakTextInfo line 3: ['Size: 3 KB']
+caret line (DisplayModelEditableText): ' Name: Report.txt\n'
+caret character: 'N'
+text change notifications (hwnd, l, t, r, b): [(31785094, 212, 185, 309, 334)] count 1
+live text speech after a new line is drawn: [' Copied 3 files']
+GDI calls (api, text, result): [('FillRect', 1), ('TextOutW', 'File  Edit  View  Help', 1), ('ExtTextOutW', 'Name: Report.txt', 1), ('DrawTextW', 'Size: 3 KB', 13), ('TextOutW', 'Status: ready', 1)]
+=== patches
+   appModuleHandler.getAppNameFromProcessID: this process is named testapp
+   NVDAHelper: callbacks wired as initialize does, nvdaHelperLocal_initialize; remote loaded, no injection_initialize
+   winUser.isWindowVisible: the test windows count as visible (they are never shown)
+   initInprocManagerThreadIfNeeded (this process only): 1
+=== NVDA log (warnings and above)

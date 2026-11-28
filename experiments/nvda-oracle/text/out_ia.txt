@@ -1,0 +1,66 @@
+﻿focus: <NVDAObjects.Dynamic_IAccessibleEditWindowNVDAObject object at 0x000001DFBED84830> ['Dynamic_IAccessibleEditWindowNVDAObject', 'IAccessible', 'Edit', 'EditableTextWithAutoSelectDetection', 'EditableText', 'EditableTextWithSuggestions']
+focus: <NVDAObjects.IAccessible.Button object at 0x000001DFBEE22190> ['Button', 'IAccessible', 'Window', 'NVDAObject', 'TextContainerObject', 'ScriptableObject']
+=== speech (oracle vs capture)
+dialog shown (foreground, then focus on the edit): ['Run  dialog  Type the name of a program, folder, document, or Internet resource, and Windows will open it for you. Open:', 'Open:  combo box  collapsed', 'edit  Alt plus  oselected notepad']  DIFFERENT, capture: ['Run  dialog  Run DLL', 'Open:  combo box  collapsed', 'edit  Alt plus  oselected notepad']
+tab: ['OK  button']  SAME
+tab: duplicate focus event on OK: []  SAME
+focus event on Cancel, which lacks the focused state (dropped by shouldAllowIAccessibleFocusEvent): []  SAME
+=== 3 of 4 the same
+=== misses
+=== members called
+       1 IUIAutomation.ProxyFactoryMapping
+       1 IUIAutomation.CreatePropertyCondition
+       1 IUIAutomation.CreateNotCondition
+       1 IUIAutomation.CreateTreeWalker
+       1 IUIAutomation.CreateCacheRequest
+      13 IUIAutomationCacheRequest.AddProperty
+       1 IUIAutomation.RawViewWalker
+       1 IUIAutomationCacheRequest.Clone
+       1 IUIAutomationCacheRequest.AddPattern
+       1 IUIAutomation.GetRootElementBuildCache
+       1 IUIAutomation.ReservedNotSupportedValue
+       1 IUIAutomation.ReservedMixedAttributeValue
+       3 IUIAutomation6.CreateEventHandlerGroup
+       3 IUIAutomation.IntSafeArrayToNativeArray
+       3 IUIAutomationEventHandlerGroup.AddPropertyChangedEventHandler
+      15 IUIAutomationEventHandlerGroup.AddAutomationEventHandler
+       1 IUIAutomation.AddFocusChangedEventHandler
+       1 IUIAutomationEventHandlerGroup.AddNotificationEventHandler
+       1 IUIAutomationEventHandlerGroup.AddActiveTextPositionChangedEventHandler
+       1 IUIAutomation6.AddEventHandlerGroup
+       1 UIARemote.initialize (skipped)
+      69 winUser.getClassName
+      51 winUser.getWindowThreadProcessID
+      14 winUser.getGUIThreadInfo
+       1 user32.GetThreadDesktop (NVDA's own state, real call)
+       1 user32.GetUserObjectInformation (NVDA's own state, real call)
+      18 winUser.getAncestor
+      10 winUser.isWindow
+       9 core.requestPump(immediate=False)
+       9 winUser.getForegroundWindow
+       6 winUser.getDesktopWindow
+      10 winUser.isHungAppWindow
+       1 uiAutomationCore.UiaHasServerSideProvider
+      10 oleacc.AccessibleObjectFromEvent
+      46 IAccIdentity.GetIdentityString
+      32 IAccessible.accRole
+      32 IAccessible.accState
+       8 winUser.getWindowStyle
+       7 core.requestPump(immediate=True)
+       3 winKernel.waitForSingleObject
+      12 IAccessible.accParent
+      26 oleacc.WindowFromAccessibleObject
+       5 IAccessible.accName
+       6 IAccessible.accDescription
+       8 IAccessible.accChildCount
+       8 oleacc.AccessibleChildren
+      14 winUser.isDescendantWindow
+       3 IAccessible.accValue
+       3 IAccessible.accKeyboardShortcut
+       2 watchdog.cancellableSendMessage
+=== patches
+   user32._GhostWindowFromHungWindow: no ghost window (the application is not hung)
+   core.requestPump: recorded; the oracle pumps IAccessibleHandler itself (no wx main loop)
+   IAccessibleHandler.initialize not run (it sets real winEvent hooks); events enter at winEventCallback
+   recording synthesizer: eSpeak NG's supportedCommands and notifications
+=== NVDA log (warnings and above)

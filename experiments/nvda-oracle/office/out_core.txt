@@ -1,0 +1,12 @@
+﻿element: Stand-in document _WwG main thread 13256
+remote operation result (pattern supported, other supported, result is null, target supports move, moved): [True, False, False, True, 30] in 2.7 ms
+=== provider log:
+   WM_GETOBJECT UiaRootObjectId
+   WM_GETOBJECT UiaRootObjectId
+   WM_GETOBJECT UiaRootObjectId
+   provider IsExtensionSupported({93514122-FF04-4B2C-A4AD-4AB04587C129}) on thread 15292
+   provider IsExtensionSupported({F39655AC-133A-435B-A318-C197F0D3D203}) on thread 15292
+   provider SetOperand(target) failed: [WinError -2147024809] The parameter is incorrect; trying SetOperand2 with the extension provider IID
+   provider CallExtension({93514122-FF04-4B2C-A4AD-4AB04587C129}, operandIds=[7]): SetOperand(target) hr=0
+   target IsExtensionSupported({F39655AC-133A-435B-A318-C197F0D3D203})
+   target CallExtension({F39655AC-133A-435B-A318-C197F0D3D203}, operandIds=[9, 10]): read count 3, wrote 30, SetOperand hr=0

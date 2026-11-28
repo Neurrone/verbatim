@@ -1,0 +1,64 @@
+comctl32 v6 view: 1 app thread has focus on list: True
+hooks: ['comctl32.DLL (4144ccf1df_6.0.26100.9818_none_3e071914e3359bdd\\comctl32.DLL) import of GetForegroundWindow redirected: ok', 'oleacc.DLL (C:\\WINDOWS\\SYSTEM32\\oleacc.DLL) import of GetForegroundWindow redirected: ok', 'comctl32.DLL (4144ccf1df_6.0.26100.9818_none_3e071914e3359bdd\\comctl32.DLL) import of GetGUIThreadInfo redirected: ok', 'oleacc.DLL (C:\\WINDOWS\\SYSTEM32\\oleacc.DLL) import of GetGUIThreadInfo redirected: ok']
+AttachThreadInput(NVDA main thread, app thread): 1 GetFocus now: True
+appModule: testapp in-process binding: True
+focus log:
+   DEBUG nvda: Processing focus winEvent: window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp), force True
+   DEBUG nvda: Creating NVDA event from winEvent: EVENT_OBJECT_FOCUS, window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp), use cache False
+   DEBUG nvda: winEvent mapped to NVDA event: gainFocus
+   DEBUG nvda: Successfully created NVDA event gainFocus for <NVDAObjects.IAccessible.sysListView32.ListItem object at 0x000001CD4FDC2E40> from winEvent EVENT_OBJECT_FOCUS, window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp)
+   Level 15 nvda: Unable to open process for processId 6364
+Traceback (most recent call last):
+  File "<repository>\nvda\source\appModuleHandler.py", line 201, in getProcessHandleFromProcessId
+    raise ctypes.WinError()
+PermissionError: [WinError 5] Access is denied.
+
+   Level 15 nvda: Unable to get process handle for process 6364 using window enumeration and subsequently getting process handle from that window
+Traceback (most recent call last):
+  File "<repository>\nvda\source\appModuleHandler.py", line 214, in getProcessHandleFromProcessId
+    raise RuntimeError(f"No window handle found for process {processId} to create process hand
+diag item raw state: 0x1300002 class of IAccessible: POINTER(IAccessible)
+   ancestor List SysListView32 14 ['16777216', '4503599627370496']
+   ancestor WindowRoot SysListView32 1 ['16777216']
+   ancestor IAccessible OracleHost 3 ['1024', '16777216']
+   ancestor WindowRoot OracleHost 1 ['1024', '16777216']
+   ancestor Desktop #32769 1 []
+focus: ListItem ['RowWithFakeNavigation', 'RowWithoutCellObjects', 'ListItemWithoutColumnSupport', 'IAccessible']
+in-process calls so far: {'nvdaInProcUtils_sysListView32_getColumnOrderArray': 8, 'nvdaInProcUtils_sysListView32_getColumnLocation': 3, 'nvdaInProcUtils_sysListView32_getColumnContent': 3, 'nvdaInProcUtils_sysListView32_getColumnHeader': 2}
+item 2 columns via NVDA (presentation order): [('Name', 'b.png'), ('Type', 'PNG image'), ('Size', '120 KB')]
+item 2 rowNumber/positionInfo: {'indexInGroup': 2, 'similarItemsInGroup': 3}
+in-process calls on the out-of-process path: {}
+=== speech
+focus item 1: ['Files', 'list', 'a.txt; Type: Text Document; Size: 3 KB  1 of 3']
+down arrow to item 2: ['b.png; Type: PNG image; Size: 120 KB  2 of 3']
+item 3 with table headers off: ['notes.md; Markdown; 1 KB  3 of 3']
+out-of-process path, focus item 1: ['a.txt; Type: Text Document; Size: 3 KB  1 of 3']
+in-process call counts (first three steps): {'nvdaInProcUtils_sysListView32_getColumnOrderArray': 28, 'nvdaInProcUtils_sysListView32_getColumnLocation': 9, 'nvdaInProcUtils_sysListView32_getColumnContent': 12, 'nvdaInProcUtils_sysListView32_getColumnHeader': 7}
+=== patches
+   appModuleHandler.getAppNameFromProcessID: this process is named testapp
+   NVDAHelper: callbacks wired as initialize does, nvdaHelperLocal_initialize; remote loaded, no injection_initialize
+   focus delivered with force=True: the hidden window is never foreground, so the item lacks FOCUSED (redirecting GetForegroundWindow/GetGUIThreadInfo in comctl32 and oleacc did not change that)
+   winUser.isWindowVisible: the test windows count as visible (they are never shown)
+   comctl32.DLL (4144ccf1df_6.0.26100.9818_none_3e071914e3359bdd\comctl32.DLL) import of GetForegroundWindow redirected: ok
+   oleacc.DLL (C:\WINDOWS\SYSTEM32\oleacc.DLL) import of GetForegroundWindow redirected: ok
+   comctl32.DLL (4144ccf1df_6.0.26100.9818_none_3e071914e3359bdd\comctl32.DLL) import of GetGUIThreadInfo redirected: ok
+   oleacc.DLL (C:\WINDOWS\SYSTEM32\oleacc.DLL) import of GetGUIThreadInfo redirected: ok
+   initInprocManagerThreadIfNeeded (this process only): 1
+   AttachThreadInput: NVDA's main thread shares the app thread's input state, so GetFocus answers the list (both threads are in this process)
+=== NVDA log (warnings and above)
+   DEBUG nvda: Processing focus winEvent: window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp), force True
+   DEBUG nvda: Creating NVDA event from winEvent: EVENT_OBJECT_FOCUS, window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp), use cache False
+   DEBUG nvda: winEvent mapped to NVDA event: gainFocus
+   DEBUG nvda: Successfully created NVDA event gainFocus for <NVDAObjects.IAccessible.sysListView32.ListItem object at 0x000001CD4FDC2E40> from winEvent EVENT_OBJECT_FOCUS, window 205652830 (SysListView32), objectID OBJID_CLIENT, childID 1, process 12800 (testapp)
+   Level 15 nvda: Unable to open process for processId 6364
+Traceback (most recent call last):
+  File "<repository>\nvda\source\appModuleHandler.py", line 201, in getProcessHandleFromProcessId
+    raise ctypes.WinError()
+PermissionError: [WinError 5] Access is denied.
+
+   Level 15 nvda: Unable to get process handle for process 6364 using window enumeration and subsequently getting process handle from that window
+Traceback (most recent call last):
+  File "<repository>\nvda\source\appModuleHandler.py", line 214, in getProcessHandleFromProcessId
+    raise RuntimeError(f"No window handle found for process {processId} to create process handle")
+RuntimeError: No window handle found for process 6364 to create process handle
+

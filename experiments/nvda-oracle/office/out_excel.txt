@@ -1,0 +1,59 @@
+﻿initInprocManagerThreadIfNeeded: 1
+appModule: excel appModules.excel binding: True
+getCellInfos($A$1, 1) -> 0
+    {'text': 'Region', 'address': '[Book1]Sheet1!$A$1', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 0, 'rowNumber': 1, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': 'Region'}
+getCellInfos($A$2, 1) -> 0
+    {'text': 'North and the northern territories combined', 'address': '[Book1]Sheet1!$A$2', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 384, 'rowNumber': 2, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': 'Includes the islands', 'formula': 'North and the northern territories combined'}
+getCellInfos($B$2, 1) -> 0
+    {'text': '1,200', 'address': '[Book1]Sheet1!$B$2', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 1088, 'rowNumber': 2, 'rowSpan': 1, 'columnNumber': 2, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': '=SUM(C2:F2)'}
+getCellInfos($A$3, 1) -> 0
+    {'text': 'South', 'address': '[Book1]Sheet1!$A$3', 'inputTitle': 'Pick', 'inputMessage': 'Choose a region', 'nvCellStates': 24, 'rowNumber': 3, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': 'South'}
+getCellInfos($A$1:$B$3, 6) -> 0
+    {'text': 'Region', 'address': '[Book1]Sheet1!$A$1', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 0, 'rowNumber': 1, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': 'Region'}
+    {'text': 'Sales', 'address': '[Book1]Sheet1!$B$1', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 0, 'rowNumber': 1, 'rowSpan': 1, 'columnNumber': 2, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': 'Sales'}
+    {'text': 'North and the northern territories combined', 'address': '[Book1]Sheet1!$A$2', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 384, 'rowNumber': 2, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': 'Includes the islands', 'formula': 'North and the northern territories combined'}
+    {'text': '1,200', 'address': '[Book1]Sheet1!$B$2', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 1088, 'rowNumber': 2, 'rowSpan': 1, 'columnNumber': 2, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': '=SUM(C2:F2)'}
+    {'text': 'South', 'address': '[Book1]Sheet1!$A$3', 'inputTitle': 'Pick', 'inputMessage': 'Choose a region', 'nvCellStates': 24, 'rowNumber': 3, 'rowSpan': 1, 'columnNumber': 1, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': 'South'}
+    {'text': '900', 'address': '[Book1]Sheet1!$B$3', 'inputTitle': None, 'inputMessage': None, 'nvCellStates': 0, 'rowNumber': 3, 'rowSpan': 1, 'columnNumber': 2, 'columnSpan': 1, 'outlineLevel': 1, 'comments': None, 'formula': '900'}
+=== members called by the native code: 39
+   ('Application', 'Range') 5
+   ('Comment', 'Text') 2
+   ('Count', 'Count') 40
+   ('Count', 'Item') 10
+   ('Font', 'Bold') 10
+   ('Font', 'Italic') 10
+   ('Font', 'Name') 10
+   ('Font', 'Size') 10
+   ('Font', 'Strikethrough') 10
+   ('Font', 'Underline') 10
+   ('Line', 'OutlineLevel') 10
+   ('Line', 'Summary') 20
+   ('Validation', 'InputMessage') 10
+   ('Validation', 'InputTitle') 10
+   ('Validation', 'Type') 10
+   ('Window', 'Application') 5
+   ('Worksheet', 'ProtectContents') 2
+   ('XRange', 'Address') 10
+   ('XRange', 'Column') 10
+   ('XRange', 'Columns') 20
+   ('XRange', 'Comment') 20
+   ('XRange', 'EntireColumn') 10
+   ('XRange', 'EntireRow') 20
+   ('XRange', 'Font') 10
+   ('XRange', 'Formula_Local') 10
+   ('XRange', 'HasFormula') 10
+   ('XRange', 'Hyperlinks') 10
+   ('XRange', 'Locked') 10
+   ('XRange', 'MergeArea') 20
+   ('XRange', 'Next') 10
+   ('XRange', 'Row') 10
+   ('XRange', 'Rows') 10
+   ('XRange', 'ShrinkToFit') 10
+   ('XRange', 'Text') 22
+   ('XRange', 'Validation') 20
+   ('XRange', 'Width') 10
+   ('XRange', 'Worksheet') 2
+   ('XRange', 'WrapText') 10
+   ('XRange', '_NewEnum') 1
+=== misses {}
+=== NVDA log (after boot)

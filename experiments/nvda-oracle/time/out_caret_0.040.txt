@@ -1,0 +1,1014 @@
+=== speech (simulated seconds, text)
+    0.0001  'Notes  window'
+    0.0001  'Body  edit  first line\n'
+    1.0400  'second line\n'
+    3.1000  'second line\n'
+=== keys sent to the application: [(1.0, 'down arrow'), (3.0, 'down arrow')]
+=== NVDA's caret-watch log
+   DEBUG nvda: Caret move detected using event. Elapsed 0.0300069 sec, retries 7
+   DEBUG nvda: Caret didn't move before timeout. Elapsed: 0.100014 sec
+=== misses
+=== wall clock: boot 1.32 s; 3.5 simulated seconds of run in 135.5 ms real
+=== picks with several runnable threads: 3 decided by the seed: 0
+=== trace hash: 80a443ca7d62e5b55e66b07b0f50bd48
+=== scheduler switches: 12 threads: ['main', 'UIAHandler.UIAHandler.MTAThread', 'uia-client']
+=== thread errors
+=== warnings
+   ERROR nvda: setSynth failed for oneCore
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\oneCore.py", line 246, in __init__
+    self._ocSpeechToken.value = self._dll.ocSpeech_initialize(self._callbackInst)
+                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+OSError: exception: access violation writing 0x0000000000000000
+
+   ERROR nvda: setSynth failed for espeak
+thDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\espeak.py", line 78, in __init__
+    _espeak.initialize(self._onIndexReached)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDrivers\_espeak.py", line 360, in initialize
+    espeakDLL = cdll.LoadLibrary(os.path.join(globalVars.appDir, "synthDrivers", "espeak.dll"))
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 482, in LoadLibrary
+    return self._dlltype(name)
+           ~~~~~~~~~~~~~^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 361, in __init__
+    self._handle = self._load_library(name, mode, handle, winmode)
+                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 379, in _load_library
+    return _LoadLibrary(self._name, winmode)
+FileNotFoundError: Could not find module '<repository>\nvda\source\synthDrivers\espeak.dll' (or one of its dependencies). Try using 
+   ERROR nvda: No VoiceSpeechDictDefinition found in _speechDictDefinitions. Speech dictionaries may not have been initialized.
+   ERROR nvda: setSynth failed for silence
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 495, in getSynthInstance
+    newSynth.initSettings()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 381, in initSettings
+    changeVoice(self, voice)
+    ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 449, in changeVoice
+    speechDictHandler.loadVoiceDict(synth)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<repository>\nvda\source\speechDictHandler\definitions.py", line 120, in loadVoiceDict
+    raise RuntimeError("No voice speech dictionary definition is available to load.")
+RuntimeError: No voice speech dictionary definition is available to load.
+
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 2630, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3253, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3266, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3293, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3328, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3468, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3478, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3488, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3498, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3508, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3517, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3527, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3536, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3545, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3555, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3565, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3574, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3583, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3593, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3603, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3613, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3622, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3631, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3640, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3649, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3658, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3667, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3676, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3685, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3694, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3750, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3777, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3799, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3823, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3873, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3916, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3938, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3957, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3973, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 3989, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 4016, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 4034, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5462, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5471, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5480, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5489, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5502, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5519, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5532, in GlobalComma
+   WARNING nvda: Using the script decorator is unsupported for <MagicMock name='gui.blockAction.when()()' id='2636122871120'>
+Stack trace:
+  File "<scratch folder>\nvda-oracle\time\run_caret.py", line 14, in <module>
+    import harness as H
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<scratch folder>\nvda-oracle\time\harness.py", line 109, in <module>
+    import globalCommands  # noqa: E402,F401  (scriptHandler imports it on the first key; surface import errors here)
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "globalCommands.py", line 195, in <module>
+    class GlobalCommands(ScriptableObject):
+  File "globalCommands.py", line 5545, in GlobalComma

@@ -1,0 +1,6 @@
+gated, DLL delivered: [('window', 20015), ('edit', 20014), ('edit', 20015)]
+   delivered on the caller's thread: False
+gated, model delivers: [('window', 20015), ('edit', 20014), ('edit', 20015), ('window', 20014)]
+ungated, 20 bursts, distinct deliveries:
+   20x [('edit', 20014), ('window', 20014), ('edit', 20014), ('edit', 20015), ('window', 20014)]
+terminated

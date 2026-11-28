@@ -1,0 +1,108 @@
+﻿initInprocManagerThreadIfNeeded: 1
+appModule: winword appModuleHandler binding: True
+document text: 'Quarterly report\rSales rose by twelve percent this quarter. Costs fell. Did margins hold? Yes, they did.\rOutlook\rWe expect growth to continue through the next two quarters, as orders remain strong.\r'
+getTextInRange para 2, flags 0: (0, '<control wdStoryType="1"><text >Sales </text><text >rose </text><text >by </text><text >twelve </text><text >pe</text></control>')
+getTextInRange para 1 with headings and font attributes: (0, '<control wdStoryType="1"><control role="heading" level="1" collapsedState="false" _startOfNode="1" _endOfNode="1" ><text >Quarterly </text><text >report</text><text >\r</text></control></control>')
+getTextInRange para 2 font attributes, style, page, line number: (0, '<control wdStoryType="1"><text style="Normal" >Sales </text><text style="Normal" >rose </text><text style="Normal" >by </text><text style="Normal" bold="1" >twelve </text><text style="Normal" bold="1" >percent </text><text style="Normal" >this </text><text style="Normal" >quarter</text><text style="Normal" >. </text><text style="Normal" >Costs </text><text style="Normal" >fell</text><text style="Normal" >. </text><text style="Normal" >Did </text><text style="Normal" >margins </text><text style="Normal" >hold</text><text style="Normal" >? </text><text style="Normal" italic="1" >Yes</text><text style="Normal" >, </text><text style="Normal" >they </text><text style="Normal" >did</text><text style="Normal" >.</text><text style="Normal" >\r</text></control>')
+selection after getTextInRange (unchanged expected): (20, 20)
+expandToLine(0): (0, 0, 17) line text: 'Quarterly report\r'
+expandToLine(20): (0, 17, 51) line text: 'Sales rose by twelve percent this '
+expandToLine(60): (0, 51, 90) line text: 'quarter. Costs fell. Did margins hold? '
+expandToLine(100): (0, 90, 105) line text: 'Yes, they did.\r'
+selection after expandToLine: (20, 20) screenUpdating toggles: [False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True]
+moveByLine(20, back=0): (0, 51)
+moveByLine(60, back=0): (0, 90)
+moveByLine(60, back=1): (0, 51)
+moveByLine(0, back=1): (0, 0)
+WM_GETOBJECT OBJID_NATIVEOM answered: 15
+=== members called by the native code: 45
+   ('Application', 'ScreenUpdating=') 30
+   ('Coll', 'Count') 6
+   ('Coll', 'Item') 70
+   ('Document', 'Styles') 1
+   ('Font', 'Bold') 24
+   ('Font', 'DoubleStrikeThrough') 24
+   ('Font', 'Hidden') 24
+   ('Font', 'Italic') 24
+   ('Font', 'Strikethrough') 24
+   ('Font', 'Underline') 24
+   ('Paragraph', 'Collapsed_State') 1
+   ('Paragraph', 'Range') 3
+   ('Paragraph', 'Style') 1
+   ('Selection', 'End') 8
+   ('Selection', 'EndOf') 8
+   ('Selection', 'Move') 4
+   ('Selection', 'Range') 15
+   ('Selection', 'SetRange') 20
+   ('Selection', 'Start') 12
+   ('Selection', 'StartIsActive') 12
+   ('Selection', 'StartIsActive=') 12
+   ('Selection', 'StartOf') 8
+   ('Style', 'NameLocal') 31
+   ('Style', 'Parent') 1
+   ('WRange', 'Collapse') 32
+   ('WRange', 'ContentControls') 29
+   ('WRange', 'Duplicate') 3
+   ('WRange', 'End') 30
+   ('WRange', 'End=') 1
+   ('WRange', 'Expand') 3
+   ('WRange', 'Fields') 3
+   ('WRange', 'Font') 24
+   ('WRange', 'FormFields') 29
+   ('WRange', 'InlineShapes') 3
+   ('WRange', 'MoveEnd') 29
+   ('WRange', 'PageSetup') 1
+   ('WRange', 'Paragraphs') 3
+   ('WRange', 'Select') 12
+   ('WRange', 'SetRange') 3
+   ('WRange', 'Start') 1
+   ('WRange', 'StoryType') 3
+   ('WRange', 'Style') 21
+   ('WRange', 'Text') 29
+   ('Window', 'Application') 15
+   ('Window', 'Selection') 15
+=== misses {}
+=== NVDA log
+   ERROR nvda: setSynth failed for oneCore
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\oneCore.py", line 246, in __init__
+    self._ocSpeechToken.value = self._dll.ocSpeech_initialize(self._callbackInst)
+                 
+   ERROR nvda: setSynth failed for espeak
+thDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\espeak.py", line 78, in __init__
+    _espeak.initialize(self._onIndexReached)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDrivers\_espeak.py", line 360, in initialize
+
+   ERROR nvda: No VoiceSpeechDictDefinition found in _speechDictDefinitions. Speech dictionaries may not have been initialized.
+   ERROR nvda: setSynth failed for silence
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 495, in getSynthInstance
+    newSynth.initSettings()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 381, in initSettings
+    changeVoice(self, voice)
+    ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\Dicks
+   ERROR nvda: error in appModule 'winword'
+all_with_frames_removed
+  File "<repository>\nvda\source\appModules\winword.py", line 17, in <module>
+    from NVDAObjects.IAccessible.winword import WordDocument as IAccessibleWordDocument
+  File "<repository>\nvda\source\NVDAObjects\IAccessible\winword.py", line 27, in <module>
+    from globalCommands import SCRCAT_SYSTEMCARET
+  File "<repository>\nvda\source\globalCommands.py", line 26, in <module>
+    import _magnifier.commands
+  File "<user folder>\Desktop\
+   ERROR nvda: Thread 4568, build\x86_64\remote\winword.cpp, detectAndGenerateColumnFormatXML, 954:
+error getting pageSetup. res: -2147467259
+

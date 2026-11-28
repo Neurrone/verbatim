@@ -1,0 +1,110 @@
+initInprocManagerThreadIfNeeded: 1
+appModule: chrome binding: True
+load and first speech after 105 ms
+focus: <NVDAObjects.IAccessible.chromium.Document object at 0x00000206825974D0> treeInterceptor: ChromeVBuf
+passThrough after edit focus: True focus now: <NVDAObjects.Dynamic_EditorEditableTextWithAutoSelectDetectionEditorIa2WebIAccessible object at 0x0000020682FAC950>
+focus log:
+   DEBUG nvda: Processing focus winEvent: window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5660 (chrome), force False
+   DEBUG nvda: Creating NVDA event from winEvent: EVENT_OBJECT_FOCUS, window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5660 (chrome), use cache False
+   DEBUG nvda: winEvent mapped to NVDA event: gainFocus
+   DEBUG nvda: Successfully created NVDA event gainFocus for <NVDAObjects.Dynamic_EditorEditableTextWithAutoSelectDetectionEditorIa2WebIAccessible object at 0x0000020682FAC950> from winEvent EVENT_OBJECT_FOCUS, window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5
+   Level 15 nvda: Process handle 0 for AppModule(appModuleHandler, appName='chrome', processID=6364) is invalid, assuming process is dead.
+   DEBUG nvda: application chrome closed
+   Level 15 nvda: IAccessibleText::textAtOffset failed
+calls during live change: {'WM_GETOBJECT': 2, 'QueryService {33F139EE-E509-47F7-BF39-837644F74576}': 5, 'accChild': 2, 'QueryService {618736E0-3C3D-11CF-810C-00AA00389B71}': 2, 'IA2.windowHandle': 1, 'IA2.uniqueID': 1, 'IA2.role': 1, 'accState': 2, 'IA2.states': 3, 'IA2.attributes': 2, 'accParent': 1, 'accValue': 1, 'accKeyboardShortcut': 1, 'accName': 1, 'accDescription': 1, 'accChildCount': 1, 'Text.text': 1, 'Action.nActions': 1, 'Text.attributes': 1, 'IA2_2.relationTargetsOfType:details': 1, 'IA2_2.relationTargetsOfType:detailsFor': 1, 'IA2_2.relationTargetsOfType:error': 1, 'Text.newText': 1}
+buffer text now: 'Read the docs first.WelcomeSearch  GoNameSizea.txt3 KBSaved 3 files'
+diag doc NodeCOM_2_2_Hypertext_Hyperlink_vider_Application refcnt 27 ptrs 12 True
+diag heading NodeCOM_2_2_Hypertext_Hyperlink_vider_Application refcnt 3 ptrs 12 True
+diag raw_itf heading: 2226981756568
+diag accChild direct: <comtypes.client.dynamic._Dispatch object at 0x0000020682E64C80>
+diag AOFE doc -1 -> childID 0 uniqueID -1
+diag AOFE heading -5 -> childID 0 uniqueID -5
+diag AOFE edit -8 -> childID 0 uniqueID -8
+diag edit object: (<class 'NVDAObjects.Dynamic_EditorEditableTextWithAutoSelectDetectionEditorIa2WebIAccessible'>, <class 'NVDAObjects.IAccessible.chromium.Editor'>, <class 'NVDAObjects.behaviors.EditableTextWithAutoSelectDetection'>, <class 'NVDAObjects.IAccessible.ia2Web.Editor'>) IA2: <class 'comtypes._post_coinit.unknwn.POINTER(IAccessible2)'> states: {<State.FOCUSABLE: 16777216>, <State.EDITABLE: 67108864>, <State.FOCUSED: 2>} role: 8
+=== speech
+focus document (buffer loads): ['Test page  document', 'navigation landmark    Read the   link    docs   first.']
+quick nav nextHeading: ['Welcome  heading    level 2']
+quick nav nextLink: ['no next link']
+quick nav nextTable: ['table  with 2 rows and 2 columns  row 1  column 1  Name']
+quick nav nextLandmark: ['no next landmark']
+quick nav nextEdit: ['no next edit field']
+quick nav previousHeading: ['Welcome  heading    level 2']
+say line at caret: ['heading    level 2  Welcome']
+browser focuses the edit field (focus mode switch): ['Search  edit  blank', 'Focus mode']
+live region text inserted: ['Saved 3 files ']
+buffer after the update (vbufChangeNotify): []
+=== patches
+   config: autoSayAllOnPageLoad off, passThroughAudioIndication off (speech instead of a sound)
+   appModuleHandler.getAppNameFromProcessID: this process is named chrome
+   NVDAHelper: initialize's callback wiring and nvdaHelperLocal_initialize; remote loaded and only initInprocManagerThreadIfNeeded called
+   NVDAHelper.localLib.nvdaInProcUtils_*: called from a helper thread while the main (window) thread pumps
+   nvdaHelperRemote import of IsWindowVisible redirected to the stand-in window: ok
+   nvdaHelperRemote import of GetForegroundWindow redirected to the stand-in window: ok
+   winUser.isWindowVisible / getForegroundWindow: the stand-in window is visible and foreground
+=== stand-in members called
+   [('Action.nActions', 18), ('Action.name', 2), ('App.toolkitName', 1), ('Cell.columnHeaderCells', 4), ('Cell.rowColumnExtents', 4), ('Cell.rowHeaderCells', 4), ('Hypertext.hyperlink', 10), ('IA2.attributes', 32), ('IA2.role', 32), ('IA2.states', 35), ('IA2.uniqueID', 46), ('IA2.windowHandle', 25), ('IA2_2.relationTargetsOfType:details', 18), ('IA2_2.relationTargetsOfType:detailsFor', 18), ('IA2_2.relationTargetsOfType:error', 18), ('IA2_2.relationTargetsOfType:labelledBy', 1), ('QueryService {3050F1FF-98B5-11CF-BB82-00AA00BDCE0B}', 12), ('QueryService {33F139EE-E509-47F7-BF39-837644F74576}', 37), ('QueryService {618736E0-3C3D-11CF-810C-00AA00389B71}', 26), ('QueryService {8D33F740-CF58-11CE-A89D-00AA006CADC5}', 12), ('QueryService {D49DED83-5B25-43F4-9B95-93B44595979E}', 1), ('Table2.nColumns', 1), ('Table2.nRows', 1), ('Text.attributes', 14), ('Text.caretOffset', 7), ('Text.nCharacters', 2), ('Text.newText', 1), ('Text.text', 17), ('WM_GETOBJECT', 18), ('accChild', 33), ('accChildCount', 21), ('accDescription', 20), ('accKeyboardShortcut', 20), ('accName', 20), ('accParent', 4), ('accState', 34), ('accValue', 24)]
+=== NVDA log (warnings and above)
+   ERROR nvda: setSynth failed for oneCore
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\oneCore.py", line 246, in __init__
+    self._ocSpeechToken.value = self._dll.ocSpeech_initialize(self._callbackInst)
+                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+OSError: exception: access violation writing 0x0000000000000000
+
+   ERROR nvda: setSynth failed for espeak
+thDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\espeak.py", line 78, in __init__
+    _espeak.initialize(self._onIndexReached)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDrivers\_espeak.py", line 360, in initialize
+    espeakDLL = cdll.LoadLibrary(os.path.join(globalVars.appDir, "synthDrivers", "espeak.dll"))
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 482, in LoadLibrary
+    return self._dlltype(name)
+           ~~~~~~~~~~~~~^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 361, in __init__
+    self._handle = self._load_library(name, mode, handle, winmode)
+                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 379, in _load_library
+    return _LoadLibrary(self._name, winmode)
+FileNotFoundError: Could not find module '<repository>\nvda\source\synthDrivers\espeak.dll' (or one of its dependencies). Try using 
+   ERROR nvda: No VoiceSpeechDictDefinition found in _speechDictDefinitions. Speech dictionaries may not have been initialized.
+   ERROR nvda: setSynth failed for silence
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 495, in getSynthInstance
+    newSynth.initSettings()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 381, in initSettings
+    changeVoice(self, voice)
+    ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 449, in changeVoice
+    speechDictHandler.loadVoiceDict(synth)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<repository>\nvda\source\speechDictHandler\definitions.py", line 120, in loadVoiceDict
+    raise RuntimeError("No voice speech dictionary definition is available to load.")
+RuntimeError: No voice speech dictionary definition is available to load.
+
+   DEBUG nvda: Processing focus winEvent: window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5660 (chrome), force False
+   DEBUG nvda: Creating NVDA event from winEvent: EVENT_OBJECT_FOCUS, window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5660 (chrome), use cache False
+   DEBUG nvda: winEvent mapped to NVDA event: gainFocus
+   DEBUG nvda: Successfully created NVDA event gainFocus for <NVDAObjects.Dynamic_EditorEditableTextWithAutoSelectDetectionEditorIa2WebIAccessible object at 0x0000020682FAC950> from winEvent EVENT_OBJECT_FOCUS, window 222494742 (Chrome_RenderWidgetHostHWND), objectID OBJID_CLIENT, childID -8, process 5660 (chrome)
+   Level 15 nvda: Process handle 0 for AppModule(appModuleHandler, appName='chrome', processID=6364) is invalid, assuming process is dead.
+   DEBUG nvda: application chrome closed
+   Level 15 nvda: IAccessibleText::textAtOffset failed
+Traceback (most recent call last):
+  File "<repository>\nvda\source\NVDAObjects\IAccessible\__init__.py", line 429, in _getLineOffsets
+    start, end, text = self.obj.IAccessibleTextObject.TextAtOffset(offset, IA2.IA2_TEXT_BOUNDARY_LINE)  # noqa: RUF059
+                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<scratch folder>\nvda-oracle\.venv\Lib\site-packages\comtypes\_memberspec.py", line 617, in __call__
+    return self.fget(self.instance, *args)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+_ctypes.COMError: (-2147467263, 'Not implemented', (None, None, None, 0, None))
+

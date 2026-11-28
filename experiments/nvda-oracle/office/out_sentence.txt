@@ -1,0 +1,23 @@
+﻿sentence starts (stand-in rule): [0, 4, 28, 39, 53, 63, 68, 89]
+moveBySentence(caret 0, +1): ((4, 4, ''), 1)
+caret range after (unchanged expected): (0, 0, '')
+moveBySentence(caret 0, +3): ((39, 39, ''), 3)
+moveBySentence(caret 0, -1): ((0, 0, ''), 0)
+expandToEnclosingSentence(caret 45): (39, 53, '"Is it done?" ')
+expandToEnclosingSentence(caret at end, guarded by NVDA): (98, 98, '')
+moveEndpointBySentence(end, +1) on range 0..0: ((0, 4, 'Mr. '), 1)
+moveBySentence on an element without the extension: None
+=== NVDA's caret-move-by-sentence sequence (move, then expand; the expanded text is what is spoken)
+  next sentence 1: moved 1, caret 4, speaks 'Smith arrived at 3 p.m. '
+  next sentence 2: moved 1, caret 28, speaks 'on Monday. '
+  next sentence 3: moved 1, caret 39, speaks '"Is it done?" '
+  next sentence 4: moved 1, caret 53, speaks 'he asked. '
+  next sentence 5: moved 1, caret 63, speaks 'Yes!\r'
+  next sentence 6: moved 1, caret 68, speaks 'Next paragraph here. '
+  previous sentence 1: moved -1, caret 63, speaks 'Yes!\r'
+  previous sentence 2: moved -1, caret 53, speaks 'he asked. '
+  previous sentence 3: moved -1, caret 39, speaks '"Is it done?" '
+=== extension calls: 93
+=== patches: ['instructions.IsExtensionSupported/CallExtension.localExecute: local bodies calling the Word extension stand-in', 'operation.Operation._executorClass = LocalExecutor', 'UIAHandler.remote._isSupported = True (initialize would set it on Windows 11)']
+=== misses: []
+=== log: []

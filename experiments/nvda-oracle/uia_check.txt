@@ -1,0 +1,177 @@
+﻿=== speech
+search (setup, not compared): ['verbatim-e2e-b9 - File Explorer  window', 'Search verbatim-e2e-b9  edit']
+moreOptions: ['More options  button']  SAME
+details: ['Details  button  Show or hide the details pane.  1 of 1']  SAME
+details again (duplicate): []
+moreOptions late event, focus now on details: []
+moreOptions with a toggle state On (sensitivity): ['More options  toggle button  pressed']
+=== UIA debug, duplicate:
+   DEBUG nvda: handleFocusChangedEvent called with element Details button with automationID DetailsButton, className AppBarButton and frameworkID XAML
+   Level 15 nvda: HandleFocusChangedEvent: Ignoring duplicate focus event 
+=== UIA debug, late event:
+   DEBUG nvda: handleFocusChangedEvent called with element More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: HandleFocusChangedEvent: NVDAObject chose to ignore event 
+=== misses
+=== members called
+      1 IUIAutomation.ProxyFactoryMapping
+      1 IUIAutomation.CreatePropertyCondition
+      1 IUIAutomation.CreateNotCondition
+      1 IUIAutomation.CreateTreeWalker
+      9 IUIAutomation.CreateCacheRequest
+    165 IUIAutomationCacheRequest.AddProperty
+      1 IUIAutomation.RawViewWalker
+      1 IUIAutomationCacheRequest.Clone
+      1 IUIAutomationCacheRequest.AddPattern
+      1 IUIAutomation.GetRootElementBuildCache
+      1 IUIAutomation.ReservedNotSupportedValue
+      1 IUIAutomation.ReservedMixedAttributeValue
+      3 IUIAutomation6.CreateEventHandlerGroup
+      3 IUIAutomation.IntSafeArrayToNativeArray
+      3 IUIAutomationEventHandlerGroup.AddPropertyChangedEventHandler
+     15 IUIAutomationEventHandlerGroup.AddAutomationEventHandler
+      1 IUIAutomation.AddFocusChangedEventHandler
+      1 IUIAutomationEventHandlerGroup.AddNotificationEventHandler
+      1 IUIAutomationEventHandlerGroup.AddActiveTextPositionChangedEventHandler
+      5 IUIAutomation6.AddEventHandlerGroup
+      1 UIARemote.initialize (skipped)
+     36 winUser.getClassName
+     14 winUser.getWindowThreadProcessID
+     12 winUser.getGUIThreadInfo
+      1 user32.GetThreadDesktop (NVDA's own state, real call)
+      1 user32.GetUserObjectInformation (NVDA's own state, real call)
+     12 winUser.getAncestor
+     44 IUIAutomationElement.CachedNativeWindowHandle
+     30 IUIAutomationElement.CachedProcessId
+     10 IUIAutomationTreeWalker(custom).NormalizeElementBuildCache
+      5 winUser.getDesktopWindow
+      6 winUser.getForegroundWindow
+     28 IUIAutomationElement.CachedControlType
+     27 IUIAutomationElement.CachedClassName
+     22 IUIAutomationElement.GetCachedPropertyValue[Ex](AutomationId)
+     14 IUIAutomationElement.GetCurrentPattern(Text)
+     56 IUIAutomationElement.CachedFrameworkId
+     14 IUIAutomationElement.GetCurrentPropertyValue[Ex](IsDialog)
+     22 IUIAutomationTreeWalker(raw).GetParentElementBuildCache
+     17 IUIAutomationElement.CachedAutomationId
+      6 IUIAutomationElement.CurrentHasKeyboardFocus
+      4 winKernel.waitForSingleObject
+      2 winUser.isHungAppWindow
+      1 uiAutomationCore.UiaHasServerSideProvider
+      2 IUIAutomation.ElementFromHandleBuildCache
+      8 IUIAutomationElement.BuildUpdatedCache
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](HasKeyboardFocus)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsKeyboardFocusable)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsPassword)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsSelectionItemPatternAvailable)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsEnabled)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](SelectionCanSelectMultiple)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsOffscreen)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsDataValidForForm)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](IsRequiredForForm)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](ValueIsReadOnly)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](ExpandCollapseExpandCollapseState)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](ToggleToggleState)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](AnnotationTypes)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](DragIsGrabbed)
+     15 IUIAutomationElement.GetCachedPropertyValue[Ex](Name)
+      3 IUIAutomationElement.GetCurrentPropertyValue[Ex](FullDescription)
+      3 IUIAutomationElement.GetCurrentPropertyValue[Ex](HelpText)
+      1 IUIAutomationElement.CachedIsContentElement
+      1 IUIAutomationElement.CachedIsControlElement
+      1 IUIAutomationElement.GetCurrentPropertyValue[Ex](PositionInSet)
+      1 IUIAutomationElement.GetCurrentPropertyValue[Ex](Level)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](GridItemRow)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](GridItemColumn)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](TableItemRowHeaderItems)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](TableItemColumnHeaderItems)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](GridItemRowSpan)
+      5 IUIAutomationElement.GetCurrentPropertyValue[Ex](GridItemColumnSpan)
+     33 IUIAutomation.CompareElements
+      4 IUIAutomation.GetFocusedElement
+      8 IUIAutomationElement.CurrentClassName
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](ValueValue)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](RangeValueValue)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](FullDescription)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](HelpText)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](AccessKey)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](AcceleratorKey)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](PositionInSet)
+      4 IUIAutomationElement.GetCachedPropertyValue[Ex](Level)
+      4 IUIAutomationElement.GetCurrentPropertyValue[Ex](ToggleToggleState)
+      3 IUIAutomation6.RemoveEventHandlerGroup
+      1 IUIAutomationElement.GetCachedPropertyValue[Ex](SizeOfSet)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](LocalizedControlType)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](ClassName)
+      8 IUIAutomationElement.GetCachedPropertyValue[Ex](FrameworkId)
+=== patches
+   config UIA.enhancedEventProcessing = disabled (native rate limiter sits before the injection point)
+   appModuleHandler.getAppNameFromProcessID / getProcessHandleFromProcessId: from the world's process table
+   UIAHandler.CoCreateInstance: returns the stand-in IUIAutomation
+   UIAHandler.UIARemote.initialize: skipped (remote operations need the real UIA core)
+=== NVDA log (warnings and above)
+   ERROR nvda: setSynth failed for oneCore
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\oneCore.py", line 246, in __init__
+    self._ocSpeechToken.value = self._dll.ocSpeech_initialize(self._callbackInst)
+                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+OSError: exception: access violation writing 0x0000000000000000
+
+   ERROR nvda: setSynth failed for espeak
+thDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 491, in getSynthInstance
+    newSynth = _getSynthDriver(name)()
+  File "<repository>\nvda\source\synthDrivers\espeak.py", line 78, in __init__
+    _espeak.initialize(self._onIndexReached)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDrivers\_espeak.py", line 360, in initialize
+    espeakDLL = cdll.LoadLibrary(os.path.join(globalVars.appDir, "synthDrivers", "espeak.dll"))
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 482, in LoadLibrary
+    return self._dlltype(name)
+           ~~~~~~~~~~~~~^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 361, in __init__
+    self._handle = self._load_library(name, mode, handle, winmode)
+                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<user folder>\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\ctypes\__init__.py", line 379, in _load_library
+    return _LoadLibrary(self._name, winmode)
+FileNotFoundError: Could not find module '<repository>\nvda\source\synthDrivers\espeak.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+
+   ERROR nvda: No VoiceSpeechDictDefinition found in _speechDictDefinitions. Speech dictionaries may not have been initialized.
+   ERROR nvda: setSynth failed for silence
+Traceback (most recent call last):
+  File "<repository>\nvda\source\synthDriverHandler.py", line 537, in setSynth
+    _curSynth = getSynthInstance(name, asDefault)
+  File "<repository>\nvda\source\synthDriverHandler.py", line 495, in getSynthInstance
+    newSynth.initSettings()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 381, in initSettings
+    changeVoice(self, voice)
+    ~~~~~~~~~~~^^^^^^^^^^^^^
+  File "<repository>\nvda\source\synthDriverHandler.py", line 449, in changeVoice
+    speechDictHandler.loadVoiceDict(synth)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<repository>\nvda\source\speechDictHandler\definitions.py", line 120, in loadVoiceDict
+    raise RuntimeError("No voice speech dictionary definition is available to load.")
+RuntimeError: No voice speech dictionary definition is available to load.
+
+   DEBUG nvda: handleFocusChangedEvent called with element Details button with automationID DetailsButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: checking if is native UIA  element: Details button with automationID DetailsButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: Locating nearest ancestor windowHandle for element Details button with automationID DetailsButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: Found ancestor element with valid windowHandle hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge
+   DEBUG nvda: Found cached is UIA window True for hwnd hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge
+   DEBUG nvda: treating element as native due to windowHandle hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge. 
+   Level 15 nvda: HandleFocusChangedEvent: Ignoring duplicate focus event 
+   DEBUG nvda: handleFocusChangedEvent called with element More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: checking if is native UIA  element: More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: Locating nearest ancestor windowHandle for element More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: Found ancestor element with valid windowHandle hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge
+   DEBUG nvda: Found cached is UIA window True for hwnd hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge
+   DEBUG nvda: treating element as native due to windowHandle hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge. 
+   DEBUG nvda: Got previously cached nearest windowHandle of hwnd 0X3B0C20 of class Microsoft.UI.Content.DesktopChildSiteBridge for element More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: Created object <NVDAObjects.UIA.UIA object at 0x00000286D02656D0> for element More options button with automationID MoreButton, className AppBarButton and frameworkID XAML
+   DEBUG nvda: HandleFocusChangedEvent: NVDAObject chose to ignore event 
+event handler groups registered on: ['root', 'moreOptions']

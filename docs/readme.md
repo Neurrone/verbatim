@@ -74,6 +74,24 @@ captures and troubleshooting.
 - [Experiments](../experiments/readme.md) — the experiments behind the
   UIA faults and the surveys behind design choices, one folder each.
 - Design records of work still being designed or built:
+  - [rewrite/design.md](design/rewrite/design.md) — the rewrite's design:
+    the protocol, the records in each process, Core's queue, the readers
+    as reducers, held views, the simulator and the verification against
+    NVDA; with [rewrite/extensions-design.md](design/rewrite/extensions-design.md),
+    the extensions design rewritten for it, and what they rest on,
+    described in [rewrite/readme.md](design/rewrite/readme.md):
+    [patterns](design/rewrite/patterns.md),
+    [options](design/rewrite/options.md), the feature walks
+    [a](design/rewrite/features-a.md) and [b](design/rewrite/features-b.md),
+    [extensions first](design/rewrite/extensions-first.md),
+    [the extension API draft](design/rewrite/extension-api-additions.md),
+    the NVDA inventory of [the core loop](design/rewrite/nvda-inventory/core.md),
+    [objects](design/rewrite/nvda-inventory/objects.md),
+    [handlers](design/rewrite/nvda-inventory/handlers.md),
+    [speech](design/rewrite/nvda-inventory/speech.md) and
+    [text](design/rewrite/nvda-inventory/text.md), and the reviews
+    [one](design/rewrite/review-fable.md), [two](design/rewrite/review-fable-2.md)
+    and [extensions](design/rewrite/review-extensions-fable.md).
   - [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
     — the approved design of the terminals build of "Readers tell, Core
     asks" (ADR 0003), which is built; the terminal code's comments cite

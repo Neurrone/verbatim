@@ -1,0 +1,19 @@
+initInprocManagerThreadIfNeeded: 1
+registration: {'uuid': '45595102-62b2-4246-8d8e-aec7b1e7f6f7', 'binding': 1913846450480, 'reg': 0, 'regHandle': c_void_p(1913843669648)}
+createBuffer -> 1913875874848 in 15.6 ms
+text length: 54
+plain: 'Read the docs first.WelcomeSearch  GoNameSizea.txt3 KB'
+markup chars: 11234
+line (0, 37, 'Read the docs first.WelcomeSearch  Go')
+line (37, 45, 'NameSize')
+line (45, 50, 'a.txt')
+line (50, 54, '3 KB')
+find heading 1 (20, 27) 'Welcome'
+find link 1 (9, 13) 'docs'
+find landmark 0 (0, 0) 
+find table 1 (37, 54) 'NameSizea.txt3 KB'
+find edit 1 (34, 35) ' '
+after update, length 59 'Read the docs first.Welcome backSearch  GoNameSizea.txt3 KB'
+surface: [('Action.nActions', 17), ('Action.name', 2), ('App.toolkitName', 1), ('Cell.columnHeaderCells', 4), ('Cell.rowColumnExtents', 4), ('Cell.rowHeaderCells', 4), ('Hypertext.hyperlink', 9), ('IA2.attributes', 17), ('IA2.role', 17), ('IA2.states', 18), ('IA2.uniqueID', 20), ('IA2.windowHandle', 19), ('IA2_2.relationTargetsOfType:details', 17), ('IA2_2.relationTargetsOfType:detailsFor', 17), ('IA2_2.relationTargetsOfType:error', 17), ('IA2_2.relationTargetsOfType:labelledBy', 1), ('QueryService', 7), ('Table2.nColumns', 1), ('Table2.nRows', 1), ('Text.attributes', 13), ('Text.text', 15), ('WM_GETOBJECT', 3), ('accChild', 9), ('accChildCount', 20), ('accDescription', 17), ('accKeyboardShortcut', 17), ('accName', 17), ('accState', 18), ('accValue', 17)]
+notes:
+  vbufChangeNotify 220070338 -1

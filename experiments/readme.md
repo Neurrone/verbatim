@@ -14,6 +14,8 @@ The faults in `books/dev/src/reference/uia-bugs.md` rest on the facts, and on co
 
 ## Design experiments
 
+- [NVDA as an offline oracle](nvda-oracle/readme.md): NVDA's own code run headless on stand-ins, its UI Automation, MSAA, text, browse-mode, list-view, display-model, input-method and Office paths, with a simulated clock and thread order, behind the rewrite's verification design (`docs/design/rewrite/design.md`, 2026-11-28).
+
 - [The listener's read below another process's window](the-listeners-read-below-another-processs-window/readme.md): how a busy parent window of another process, and a remote operation queued in its process, delay or drop the listener's read of a focus in the child window (`books/dev/src/explanation/design/listener-without-connections.md`, decision 13 and risk 14).
 - [The console host raises its caret events on its blink timer](the-console-host-raises-its-caret-events-on-its-blink-timer/readme.md): whether the console host gives a held caret key's watch any evidence sooner than its console caret event; every caret signal it raises comes on the next tick of its 530 ms cursor blink timer, and nothing between ticks (2026-10-26).
 - [A terminal's read ends at the document end it started with](a-terminal-read-ends-at-the-document-end-it-started-with/readme.md): why a read during a flood under a scroll region leaves out the footer below the caret (`conhost_footer_flood`, GitHub run 40317394858); output that moves the document's end between the document range and the snapshot's text cuts the text at the old end, in both terminals, in 93 and 65 percent of reads during a fast flood and none after it (2026-10-26).
