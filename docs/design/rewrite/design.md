@@ -122,7 +122,7 @@ Each process turns a message into a sealed record once, in its intake.
 
 - A message that does not parse is refused and logged, never defaulted.
 - An answer is matched to its request by the peer it came from first, then by number. An answer for a number its peer's record does not hold is late: it is logged, its content is dropped, and Core answers it once with `Cancel(Late)`, so the reader ends any standing request under that number [review M1].
-- An answer that does not fit the request's batch fails the parse as undecodable. An example is a meeting point that names no ancestor Core sent.
+- Typed answers (Dickson, 2026-11-28): one crate, shared by Core and the readers, defines each step kind with its answer type. The readers' executors are typed, a step in and its answer out, and Core's parser is derived from the same definition, so a batch and the parse of its answer cannot disagree. Only a corrupted or hostile message is a run-time error, refused at the boundary; an example is a meeting point that names no ancestor Core sent.
 
 ### Cost per focus (estimate, by counting messages)
 
@@ -157,7 +157,7 @@ Which records name ids, for every holder today's `SrState::held_nodes`, `held_an
 | A record-owned request's named ids | the owner record |
 | A plain node (a ghost or the desktop in front) | none at a reader: `Foreground` and Core's plain answerer |
 
-How the view stays complete (Claude, 2026-11-28): every id of a reader in a Core record is held as a `Named<Id>` field, and every record type that holds one implements `NamesIds`, which the view's computation calls. A check beside the ledger fails the build when a ledger type holds a `Named<Id>` and does not implement `NamesIds`, so a new record cannot forget to name its ids. This is the computation today's `held_*` functions do by hand, made total by the check.
+How the view stays complete (Dickson, 2026-11-28): every record derives its naming, `#[derive(NamesIds)]`, and hand-written implementations are refused. The derive requires every field's type to declare whether it holds ids, so a type that holds ids without the declaration cannot be stored in a record, and no field or enum variant can be forgotten. Id values can be constructed only where a reader's message is parsed, and each kind of id (node, anchor, token) is its own type. This is the computation today's `held_*` functions do by hand, made total by construction.
 
 A running entry's ids [review 2 M1]. A running entry's future is stored beside `Core`, so ids carried in it would be in no record, and a view sent while it waits would release them. So:
 - Each queue entry, waiting or running, has an ids record in `Queue`: an ordinary sealed record, a ledger type implementing `NamesIds`, not part of the future. The ids a tell carries go there when the entry is built.
@@ -180,7 +180,7 @@ The say-all rule `say_all_stops_when_its_outpost_generation_ends` holds because 
 Limits:
 
 - A reader keeps the ids it sent until Core's next message to it, as today.
-- Ids lost with an abandoned worker: since such elements are lost (Dickson, 2026-11-28, item 3), the outpost marks every element whose arena was that worker `Lost`, answers "not there" for any ask naming one, and sends no `Release` job to the stuck worker; each `Lost` element's record is dropped when a view leaves it out. Core's records may name lost ids until then, which is the one exception to the invariants on named ids [review 2 S3].
+- Ids lost with an abandoned worker: since such elements are lost (Dickson, 2026-11-28, item 3), the outpost marks every element whose arena was that worker `Lost`, answers "not there" for any ask naming one, logs each lost id, and sends no `Release` job to the stuck worker; each `Lost` element's record is dropped when a view leaves it out. There is no new kind of reply (Dickson, 2026-11-28). A simulator invariant reads the reader's log of lost ids and checks that Core never treats a lost id as live: a "not there" for an id Core names is allowed only for an id in that log [review 2 S3].
 - An id Core's records stop naming too early costs a re-read, answered "not there", and the simulator's invariant "no `NotThere` for an id Core's records name" finds it.
 
 ## Records, per process
@@ -302,8 +302,7 @@ The rules as Dickson set them, with how each is enforced:
 2. Each wait names its stage: `cx.ask(stage!("focus.walk", ends_on: [PendingFocus]), peer, batch).await`. The stage is a `&'static str` checked against a per-feature list at compile time by a macro, with the end causes that may withdraw this wait (the section "Ending the front's request"). Dumps show each entry's stage, the request out and the answers so far, and decision logs carry the stage.
 3. Fact types are `!Send`, and entry futures must be `Send`, so holding a fact across a wait fails to compile.
    - Every fact type carries a `NotSend` marker, a zero-sized `PhantomData<*const ()>`. The queue stores `Pin<Box<dyn Future<Output = Ended> + Send>>`.
-   - `Cx` is `Send` and holds only the entry's id. Core's state is reached only inside `cx.read(|core| ...)` or `cx.apply(|core| ...)`, closures whose result must be `Send` and whose borrow ends before the next wait.
-   - The driver gives the closure `&Core` through a scoped thread-local set only while it polls. I propose the `scoped-tls` crate, read from its source first (Claude, 2026-11-28). It is a small dependency, not a major one.
+   - `Cx` is `Send` and holds only the entry's id. Core's state is reached only through `cx.read(|core| ...)` and `cx.apply(|core| ...)`, closures whose result must be `Send`. Each is an await point: the closure goes to the driver, which runs it with Core's context passed explicitly as `&mut`, between polls, and resumes the entry with the result. The closure receives `&Core` or `&mut Core` and never sees `cx`, so a nested access is a borrow-checker error, not a run-time panic. There is no thread-local, and the `scoped-tls` dependency is dropped (Dickson, 2026-11-28). How the closure reaches the driver, through the entry's slot the driver owns, is proven in build step 3.
    - Entry types (a parsed tell, a walked route, a focus read) are `Send` and not `Clone`. They are the entry's own data and may cross waits. They hold reader ids only as `IdRef`s into the entry's ids record, never the ids themselves [review 2 M1]. When one is committed it moves into a fact record and cannot be copied back out.
    - What the compiler cannot catch is a plain value, such as a `bool` or a `Pid`, read before a wait and used after it. Rule 4 catches that.
    - The rule's real reach, stated plainly [review S3]: the closure's borrow already stops a reference to Core crossing a wait. The `NotSend` marker adds one thing, stopping an owned clone of a whole record. Ids, booleans, strings and `Arc`s of entry types are `Send` and pass. The main guard against a derived copy is rule 4, which is dynamic: it catches a copy only on a world and seed that reach that wait with a change.
@@ -343,6 +342,8 @@ The rules as Dickson set them, with how each is enforced:
    - whether the element is on the focus line as it arrives, for stale changes after a report of the focus (`changes-and-selection.md`).
 
    Not stamped, and judged live at placement, as today and as NVDA does: the cap's exemption, which NVDA computes from `lastQueuedFocusObject` at the pump (`IAccessibleHandler/__init__.py` 1025 to 1035; today `limiter.rs` 358 and `entries.rs` 964 to 972), and `place` (`limiter.rs` 126 to 178). A stamp is a value, never an id, so it names nothing the held view must keep. Stamps are not exempt from async rule 4: the world-change mode treats a stamp as a read at arrival, changes the stamped fact between arrival and the decision, and the comparison with NVDA, which judges at its own point, decides whether the stamp was allowed [features A, addition H; review M3] (Claude, 2026-11-28).
+9. Obligations as types, for the known cross-record pairs only (Dickson, 2026-11-28). Where a first transition must be followed by a second in another record (a held key passed to a terminal must tell the terminal's model; the list is closed, like the owners of requests), the first returns an obligation token, a `#[must_use]` value neither `Clone` nor `Copy`, and only the second consumes it. An entry can return `Done` only with no obligation held, so a two-step change cannot stop after its first step, an early `?` included. The tokens sit in the entry's ids record beside its ids.
+10. Carry-marked types (a spike at the prototype's start) (Dickson, 2026-11-28): only types marked as carriable (ids as `IdRef`s, request handles, the answer just received) may be held across a wait in a Core entry. Clippy's `await_holding_invalid_type` is tried first; a custom lint needs a lint-runner dependency such as dylint, which is Dickson's to approve. If it works, a `bool` or a `Pid` derived from Core's facts can no longer cross a wait unseen, which today only rule 4's dynamic check catches.
 
 Core's thread runs `Core::step(input, now) -> Effects`. An input is an `Answer` tagged with its peer, a key, a shell input, or a due time. Shell inputs include the hang check's answers (`RefusedHung`, `InFront`, `HangCheck`) and the live reads the shell makes on a wake that Core asked for: the menu check's read of the window in front 50 ms after a menu ends, and a lock key's state 30 ms after its press [features A, addition G]. The effects are `Send(peer, ToPeer)`, `Say(utterance)`, `WakeAt(time)`, `Log(decision)` and the shell steps, including `CheckHung`. One shell-step function, shared by the product, mockapp's harness and the simulator, applies them through an `Io` trait; the simulator's `Io` answers the hang check from the world's `window.hung`.
 
@@ -466,7 +467,7 @@ The same shape in the listener, each outpost, the supervisor and the hosts:
 - Determinism: the same seed gives the same choice list and the same decision log.
 - Liveness: with no hung call the queue drains, and with one the front entry ends at its due time.
 - The world-change mode's rule about facts read before a wait.
-- Speech and decisions match the oracle for that world, within the allowlist (below).
+- Speech and decisions match the world's expectation files (below).
 
 ## Verification, end to end
 
@@ -476,7 +477,7 @@ The pipeline has six stages.
 2. The world server serves the world to both screen readers.
 3. NVDA runs headless over it with a simulated clock.
 4. Verbatim runs over it under the seeded simulator.
-5. A step-by-step comparison of speech and decision logs, by fingerprint, is made against a structured allowlist tied to parity rulings.
+5. A step-by-step comparison of speech and decision logs, by fingerprint, against each world's two expectation files.
 6. NVDA's line coverage over the corpus is the gap list. The desktop suite keeps the replay honest.
 
 ### World capture
@@ -599,7 +600,7 @@ These are the rules the inventories imply. Each names the defect in today's harn
 11. The native UI Automation event limiter is on, as NVDA's default (`enhancedEventProcessing`, `configSpec.py` 310); the harness turns it off today. The real DLL is the oracle, driven deterministically by gating its flusher: the harness decides each batch boundary, adds the batch's events and only then lets the flusher run. The 32-line model is only a cross-check [`handlers.md`, hardest 1] (Dickson, 2026-11-28).
     - The gate: the first event into an empty list wakes the flusher with no point the harness controls (`rateLimitedEventHandler.cpp` 37, 56 to 59, 90 to 97), so each batch starts with a primer event that the harness's inner handler holds, which keeps the flusher inside its first call while the batch's events are added; the harness swallows the primer's delivery [review 2 S4].
     - Plausible boundaries, defined: a boundary may fall between two events only if the gap between their recorded arrival times is no shorter than the shortest measured run of NVDA's handler for the batch before it, and a batch can hold an event only if it arrived before that batch's flush could have started. The handler times come from a one-time desktop measurement of NVDA's handlers, which this definition makes required, not optional [review 2 S4].
-    - Verbatim's listener keeps the newer of two coalesced events, where NVDA keeps the older: a ruled difference, kept (Dickson, 2026-11-28, commit deaf7553, `docs/parity/backends.md`). It enters the allowlist as a general rule, not per world [review 2 M2].
+    - Verbatim's listener keeps the newer of two coalesced events, where NVDA keeps the older: a ruled difference, kept (Dickson, 2026-11-28, commit deaf7553, `docs/parity/backends.md`). It is cited on each step where it applies, in Verbatim's expectation file [review 2 M2].
 12. Live reads are answered as of each read, at the simulated time of the read: `CurrentHasKeyboardFocus` in the duplicate rule and `shouldAllowUIAFocusEvent`, `GetFocusedElement` on UI Automation's thread, `GetForegroundWindow` in foreground handling and the two-cycle foreground defer [`handlers.md`, hardest 3].
 13. NVDA's event registrations filter delivery. On Windows 11 22H2 and later selective registration is the default, so property and caret events reach NVDA only for elements it registered; the stand-in records registrations today but delivers everything. The world holds all events, and the stand-in delivers only what NVDA's registrations admit [`handlers.md`, hardest 4].
 14. The key reaches the application inside NVDA's polls. Keys are injected at `keyboardHandler.internal_keyDownEvent` and `internal_keyUpEvent`; their return value says whether the key reaches the application. A passed application key releases its recorded reaction at its recorded delays, so `editableText._hasCaretMoved`'s poll sees the caret move, the event or the timeout as NVDA would. A reader gesture is not delivered. A key NVDA passes that the recording did not deliver, or the reverse, is a miss for the rest of the world [`text.md`, cross-cutting seams; `core.md`, hardest 4].
@@ -766,24 +767,13 @@ The same world, served through `Platform` to the listener's and the outposts' ex
 - The schedules a comparison uses [review 2 M2]: NVDA over every thread order and plausible batch boundary the harness enumerates at the step; Verbatim over the recorded arrival order and every order between pipes the simulator explores at that step within the seed budget. Every explored Verbatim schedule must give the outcome the rule or entry requires, so Verbatim's own order dependence is judged too.
 - Snapshot differences, their own rule class [review 2 M2]: where Verbatim read by one remote program and NVDA by sequential reads across a world change, the step is judged by running NVDA's sequence against the same world with its reads served at one instant, the instant of Verbatim's program. Verbatim must equal NVDA's outcome there; or a ruling covers the difference as a general rule.
 - Two streams are compared: Verbatim's `Say` effects against NVDA's requested speech, and Verbatim's speech thread's output, with its cancels, against NVDA's delivered speech.
-- The allowlist is structured data, one entry per allowed difference:
-
-  ```toml
-  [[difference]]
-  ruling = "docs/parity/<file>.md#<anchor>"
-  status = "approved"          # or "pending", for a difference not yet ruled (CLAUDE.md, "Who decides")
-  world = "worlds/explorer-01.jsonl"
-  step = "s04"                # the world step the difference is at
-  count = 1                    # how many times it occurs there
-  match = { decision = "focus.title", nvda = "...", verbatim = "..." }
-  ```
-
-  - An entry pins its world file, step and count, never a tag alone, so one entry cannot hide every difference of a decision across many worlds; a change in the count fails [review S10].
-  - A ruled systematic difference is a general rule instead, `[[difference_rule]]`, matching by decision and the shape of the difference across every world, with its ruling, for example the limiter's keep-newer coalescing (Dickson, 2026-11-28, commit deaf7553, `docs/parity/backends.md`). A general rule never matches a difference of another decision, and one that matches nothing fails as stale [review 2 M2].
-
-  - An entry whose ruling anchor does not resolve fails the build.
-  - An entry that matches no difference over the corpus fails as stale, so the list only tracks rulings.
-  - A pending entry is listed in every report until Dickson rules on it.
+- Expectations (Dickson, 2026-11-28): each world has two complete expectation files, NVDA's and Verbatim's, side by side.
+  - NVDA's file holds the oracle's output, and is checked against the oracle on Windows.
+  - Verbatim's file holds Verbatim's whole expected output. For every step without a ruling cited on it, Verbatim's file must equal NVDA's, and that is checked. A difference is accepted only with a ruling cited on that step in Verbatim's file, and a cited ruling must resolve to its parity entry.
+  - Verbatim is checked against its own file on any host, Linux included.
+  - A ruled systematic difference, such as the limiter's keep-newer coalescing (commit deaf7553, `docs/parity/backends.md`), is cited on each step where it applies.
+  - The separate allowlist is removed: the ruling on a differing step is held once, in Verbatim's file.
+  - A difference not yet ruled is cited as pending, listed in every report until Dickson rules on it.
 - Where Verbatim deliberately differs over a whole behaviour, such as the terminal's row memory and flood policy, its oracle is a reference model, not NVDA. A separate agent writes it from the rulings only, never from the implementation. It is checked by invariants and by transcripts Dickson approved.
 - Approved by Dickson (2026-11-28) (items 6 and 7): the comparison gates `cargo xtask ci`. It needs Python 3.13, comtypes and an NVDA build's `lib` folder on the runners, since `NVDA_LIB` points at an installed NVDA today.
   - This is a different tool from `cargo xtask nvda compare`, which runs live NVDA and stays exploration only.
@@ -834,9 +824,9 @@ The corpus is built and held out before the verifier is tuned [review M6]. A sep
 
 The run: each mutant over the corpus of recorded and generated worlds, with the comparison and the invariants, and a seed sweep of at most 20 seeds per world for invariant runs.
 
-- A catch is behavioural only: a comparison difference not on the allowlist, an invariant violation, or a miss (as the recorder's rules define it). A compile or check failure is not a catch. Mutants the skeleton prevents by construction are reported apart, as "prevented", and do not count toward the rate [review M6].
+- A catch is behavioural only: a difference from the expectation files, an invariant violation, or a miss (as the recorder's rules define it). A compile or check failure is not a catch. Mutants the skeleton prevents by construction are reported apart, as "prevented", and do not count toward the rate [review M6].
 - The report gives, per mutant, what caught it and at which seed, and for each miss its class: no world exercises it, the oracle cannot see it (R6, or R5 not yet loaded), or no invariant names it.
-- The unmutated build must give no difference outside the allowlist and no miss, so a catch is not noise.
+- The unmutated build must match its expectation files with no miss, so a catch is not noise.
 
 What the rate decides (thresholds proposed, Claude, 2026-11-28; Decision for Dickson, item 5, since they decide scope). The rule is the 95 percent Wilson interval on the catch rate, against 65 percent:
 
@@ -870,10 +860,10 @@ In the redesign (Dickson, 2026-11-28) it becomes the trace, the first level of t
   - Every root (Core, each reader's root, the supervisor, each host and each shell thread's root) is listed.
   - The walker follows field types into other workspace crates. Today it follows only the root's own crate, which the audit found.
   - No `known-copy` is allowed for the new roots.
-- The ratchet (`xtask/src/shared_state.rs`): the logic crates and Core start at zero atomics, cells, locks or once-values, with one listed exception. The shells' few are listed, and counts only fall. How the mechanism fits it [review S4]:
+- The ratchet (`xtask/src/shared_state.rs`): the logic crates and Core start at zero atomics, cells, locks or once-values. The shells' few are listed, and counts only fall. How the mechanism fits it [review S4]:
   - Tickets need no interior mutability. An entry's ticket lives in the driver's own slot for that entry, so when the driver drops an entry's future it ends the ticket itself, in the same step. A record's ticket is a plain `#[must_use]` value, neither `Clone` nor `Copy`, and a record's transition that replaces or drops one returns a `Cancel` effect. A ticket dropped any other way is caught by the simulator's invariant that every `Out` record has a live owner.
   - The queue's futures are stored in the driver beside `Core`, not inside it, and are polled with `&mut` access, so no `RefCell` is needed.
-  - The one exception is the scoped thread-local that gives `cx.apply` its `&mut Core` while the driver polls: `scoped-tls` holds a `Cell` inside. It is listed by name in the ratchet for the driver module alone. Today's driver uses `shared.borrow_mut()` (`inbox.rs` 601).
+  - There is no exception: Core's context is passed to `cx.read` and `cx.apply` explicitly as `&mut` by the driver (Dickson, 2026-11-28), where today's driver uses `shared.borrow_mut()` (`inbox.rs` 601).
 - Sealing, a new check beside the ledger:
   - Every field of a type the ledger reaches is private.
   - An enum that carries data is private to its module, wrapped by a sealed struct.
@@ -948,9 +938,9 @@ Dickson's decisions of 2026-11-28 on what a feature should cost to add, beyond t
 ### Properties
 
 - The existing table, `PropertyId` in `crates/verbatim-model/src/property.rs`, stays the one declaration of every property.
-- Core reads an element into one struct generated from the table, one field per property. Each field is given, absent, or not asked, three states of one type, so no field has a valid-looking default.
+- Each feature's read type holds only the fields it asked for, generated from the table (Dickson, 2026-11-28). Each field is given or absent, two states of one type, so no field has a valid-looking default and no field can be read that was not asked: the shared struct's "not asked" state goes, and with it the pre-mortem's `props!` question.
 - Reads are driven by the table. There are no hand-written read shapes such as today's UI Automation ancestor shape (`crates/verbatim-uia/src/shape/shapes.rs`).
-- Tests build the struct through one constructor, never field by field.
+- Tests build each read type through one generated constructor, never field by field.
 - So adding a property is a table line, plus its rule and its test.
 - Why: commit 8ce48d3e, which added one fact (whether an ancestor has a description), touched 29 files. Six were documents. Fourteen were in Core, nine of them tests that only added the new field to structs they build by hand (`described: false`). Two were mockapp's tests and fixture. The other seven were the model's request and tree types, the UI Automation client and its ancestor shape, the outpost's request, the IAccessible2 acquire, and a test seam in the outpost logic.
 
@@ -962,11 +952,12 @@ Dickson's decisions of 2026-11-28 on what a feature should cost to add, beyond t
 
 ### Expectations
 
-- Each world's expectation file stores two outputs: NVDA's, generated by the oracle, and Verbatim's expected output, which equals NVDA's except where a ruling differs, citing that ruling.
+- Each world has one complete expectation file for Verbatim beside NVDA's, as the comparison gives (Dickson, 2026-11-28).
 - Checks:
-  - Verbatim matches its expectation, on any host, Linux included, since it needs no NVDA.
-  - NVDA's stored output matches the oracle, on Windows, where the oracle runs.
-  - Any step where the two stored outputs differ cites a ruling.
+  - Verbatim matches its file, on any host, Linux included, since it needs no NVDA.
+  - NVDA's file matches the oracle, on Windows, where the oracle runs.
+  - For every step without a ruling cited on it, Verbatim's file equals NVDA's; a difference is accepted only with a ruling cited on that step in Verbatim's file.
+  - The separate allowlist is removed.
 - This changes `books/dev/src/reference/testing.md`, which is Dickson's (CLAUDE.md, "Who decides", item 7); he took this decision, and the wording is his to approve.
 
 ### Not now
@@ -976,6 +967,54 @@ Dickson's decisions of 2026-11-28 on what a feature should cost to add, beyond t
 ### The next design task
 
 The text interface's design, Core's and the extensions', comes next, before the prototype grows past the focus slice.
+
+## The pre-mortem's recommendations, filtered
+
+`premortem.md` in this folder asked which bugs the rewrite would most likely fail by, and ranked fifteen changes. Dickson's standing rule decides which are taken: balance correctness with realistic use, so a guard is adopted when it covers a case that realistic use meets, at modest cost (Dickson, 2026-11-28). Each is listed with its realistic trigger and how often that happens (Claude's estimates), and the verdict (Claude, 2026-11-28, under that rule, except where a decision of Dickson's above settles it).
+
+Settled by Dickson's decisions above:
+- The expectation files as NVDA's output plus overrides, replacing the allowlist's per-world entries: superseded by the two complete expectation files and the allowlist's removal ("Expectations").
+- `props!` per feature: answered by per-read types generated from the table ("Properties").
+- Obligation tokens: async rule 9.
+- `#[derive(NamesIds)]` only, private raw-id constructors, a type per id kind: "How the view stays complete".
+- `&mut self` on `Cx` against nested access: async rule 3, with no thread-local.
+- The speech-text stage's asker: a host of its own asked only by the speech pipeline (M6).
+- Lost elements: the reader's log checked by an invariant, no new reply ("Release by held views").
+- Commands cancelled by holding hooks: accepted and logged under their module (`extensions-design.md`, section 6). NVDA instead freezes on a slow script, and the starvation case, a stream of matching events cancelling every command of one module, is rare in realistic use.
+
+Adopted:
+
+| Recommendation | Realistic trigger | How often | Cost |
+|---|---|---|---|
+| World capture writes raw calls and raw variants, with Verbatim's parse applied only at replay | a platform-layer misreading, as 9e517cad's missing property read as false | has happened; any new property or provider can bring one | a raw writer beside the readers' reads, measured with world capture |
+| Every generated-world rule cites the recording that shows it; the report gives the share of steps resting on worlds with no live NVDA capture | generated worlds agreeing with NVDA on behaviour no application has | every generated world | a check and a figure |
+| Position accounting stated once per message kind in a table both ends read, with a generated fault test | every coalesced, credit-held, refused or late message | every flood | one table and one test |
+| The ticket field reachable only through `replace(new) -> Cancel`; `IdRef` neither `Copy` nor `Clone`, consumed by `let_go` | a ticket overwritten by assignment, as e0092292 | has happened twice by CLAUDE.md | none at run time |
+| The interleaving mode: record answers and arrivals delivered on both sides of each front wait | terminal output during a review press | daily in terminal use; one flaky test already | simulator time only |
+| A scrub step before any recording joins the corpus, refusing a password field's text or clipboard text not typed by the scenario | real-use or desktop captures of real documents | every real-use capture | tooling only |
+| Credit granted when half a reader's credit is used and Core has nothing else to send it, with a liveness invariant | a terminal flood while nothing else happens | every large output | at most one message per half-credit |
+| Stages as a generated enum in the front view; the driver refuses a second ask under one stage in one poll after a cause ended the first | a record judging a renamed stage; an extension loop re-asking under a held cause | each stage change; extensions' loops | none at run time |
+| One filter function, generated from the extension interface's types, for scope and the lock screen | each new context field or effect | every extension interface change; a trust defect when missed | generated code |
+| A `Cancel` reaching the outpost before an act step skips it and every later step; `not_after` on jobs | a later key withdrawing a batch that clicks or selects (Activate, the tray click) | ordinary use with quick keys | a check between steps, no state |
+| The reader stops sending under a number at the first `Cancel(Late)`, with no table of numbers in Core | a flooding follow cancelled while its items are in flight | every cancelled flood | none |
+| A mid-run dump's replay checked in the simulator; a dump takes the processes' common window, and an ending reader's ring is kept by the supervisor | a real failure's dump, the trace's purpose | each field failure | simulator and supervisor tooling |
+| Reports and ratchets: held-view size and time per message at the worst case; cache-request property counts; overtaken utterances; worlds a change invalidated, with re-recording only with a reason; a check that no `sim` or `fixtures` feature reaches the product binaries | floods, browse documents, corpus churn, cargo feature unification | continuous | figures and one check |
+| A one-member NVDA set at a point the harness marks order-dependent is reported with the orders tried; the handler-time measurement is stored with its machine and re-taken on a runner change | an under-explored race making silence required | each seed budget change | a report |
+| A long generated world asserts every reader's element count stays under a fixed figure | a navigator or extension holding ids of long-gone elements, as `BackendCache.probed` | long sessions | one assertion |
+| A bound on in-flight network imports per extension instance, a new one refused past it | a translator cancelled at every key press | every typing session with a translator | a counter in the host |
+| Wasmtime's NaN canonicalisation on in every build | a trace replayed on another architecture | every cross-architecture replay | a setting |
+| The gate's report classes each historical bug that could not be written as a mutant | the mutant corpus missing uncouplable faults (Just et al. 2014: 17% coupled to none) | once per gate | a column |
+
+Dropped, with the reason:
+
+| Recommendation | Why dropped |
+|---|---|
+| `Fresh<T>` wrapping every read | superseded by the carry-marked lint's spike (async rule 10), which closes the same class at compile time; if the spike fails, it comes back |
+| The element struct's size as a ratchet | per-read types hold only the fields asked, so the size grows only with what a feature reads |
+| Outcome-rule match counts | the outcome-rule form is open until implementation; revisited with it |
+| Declared bounds on the ids each record type may name | the long-world element-count assertion covers the realistic leak; a bound per record type adds a figure to every record for little more |
+| An SDK guard deferring cancellation to the end of a marked block | third-party extensions and their SDK are M13; revisited there |
+| The first draft's live test per world-server operation | already dropped by the pre-mortem: it pins no combination, and the live API tests cover real behaviour |
 
 ## The roadmap's later work in the skeleton
 
@@ -1015,6 +1054,7 @@ For each milestone: where it fits, what verification covers, what in the skeleto
 - Verification: the M6 plan's generated tests against a model of the pair become simulator runs with the host's pure command module as its process.
 - What changes: the protocol's types are shared by a second asker.
 - Tentatively yes (Dickson, 2026-11-28, items 3 and 4), to be revisited in M6: the speech thread's pipe to the host joins the generic messages. The C interface `verbatim_synth_v1` is a public contract and does not change.
+- Speech-text stages, such as a translator, run in a host of their own that only the speech pipeline asks, with a context the speech pipeline owns (the utterance and its marks), not Core's. Core's queue never waits on a translation (Dickson, 2026-11-28); `extensions-design.md`, section 9, has the stage.
 
 ### M6.1, hung and flooding applications
 
@@ -1022,7 +1062,7 @@ For each milestone: where it fits, what verification covers, what in the skeleto
 - Floods:
   - The listener's `ListenedApp.coalesce` keys waiting items by the keys Core's filters name, as NVDA's UI Automation limiter does (`rateLimitedEventHandler.cpp` 30 to 97, ruled 2026-11-19).
   - Items beyond a credit Core grants are held there. Credit rides on every message Core sends, and foreground and focus tells are exempt, as the protocol section gives [review S1].
-- Verification: the simulator's flood fault at the measured rates, against NVDA with its limiter on, as harness rule 11 requires. The oracle is the real limiter DLL with its flusher gated, the harness choosing the batch boundaries and exploring the plausible ones (Dickson, 2026-11-28); the 32-line model is a cross-check only. The saved run (`nvda-oracle/time/out_rl.txt`) shows the gated DLL delivering three events and the model four, and is older than the model's last edit, so it is rerun before either is trusted [review S11, U1]. That the limiter keeps the oldest duplicate is confirmed by its source: `rateLimitedEventHandler.cpp` 46 to 50 erases through a structured binding that aliases the map entry just overwritten. Verbatim keeps the newer, a ruled difference, kept (Dickson, 2026-11-28, commit deaf7553, `docs/parity/backends.md`), entered in the allowlist as a general rule [review 2 M2].
+- Verification: the simulator's flood fault at the measured rates, against NVDA with its limiter on, as harness rule 11 requires. The oracle is the real limiter DLL with its flusher gated, the harness choosing the batch boundaries and exploring the plausible ones (Dickson, 2026-11-28); the 32-line model is a cross-check only. The saved run (`nvda-oracle/time/out_rl.txt`) shows the gated DLL delivering three events and the model four, and is older than the model's last edit, so it is rerun before either is trusted [review S11, U1]. That the limiter keeps the oldest duplicate is confirmed by its source: `rateLimitedEventHandler.cpp` 46 to 50 erases through a structured binding that aliases the map entry just overwritten. Verbatim keeps the newer, a ruled difference, kept (Dickson, 2026-11-28, commit deaf7553, `docs/parity/backends.md`), cited on each step where it applies, in Verbatim's expectation file [review 2 M2].
 - Follow items are bounded the same way: the outpost's `Following.coalesce` holds items beyond the credit Core grants, and Core's messages grant more [features B, addition 7].
 - What changes: credit in `WatchFilters` and on `Follow`, approved by Dickson (2026-11-28).
 
@@ -1119,10 +1159,10 @@ Verification tooling, all estimates:
 | List-view rebuild with its read-back check, and the display model's redraw | 600 |
 | Word and Excel fact models (about 745 lines measured in the experiment) and their recorder | 1,200 |
 | Simulator: scheduler, choices, shrinking, invariants, world-change mode | 2,500 |
-| Comparison, fingerprints, allowlist, outcome rules and entries, snapshot rule | 1,300 |
+| Comparison, fingerprints, expectation files and their checks, outcome rules and entries, snapshot rule | 1,300 |
 | NVDA harness in Python for the slice: strict stand-ins, clock and baton scheduler, full pump, synthesizer stand-in, both capture streams, the gated limiter with its primer and boundary exploration, the no-leak check, registration filter, live reads | 4,400 |
 | The measurement gate: corpus tooling, mutant runner, report | 500 |
-| xtask checks: sealing, `!Send`, stages, allowlist and coverage | 600 |
+| xtask checks: sealing, `!Send`, the `NamesIds` derive, stages, expectation files and coverage | 600 |
 | Total | about 20,100 |
 
 The experiments' own code is the start of the harness line, not extra: 11,379 lines of Python across 65 files (counted with `wc -l` after the native and Office experiments, generated code excluded), with three copies of the stand-ins at about 660 lines each, which merge [review 2 S13]. The product needs no line for moving the program generator, since `Platform` is cut above it. The stand-ins beyond the slice, where the R2 class's roughly 37,600 lines of NVDA wait, are not estimated; they grow with the features that need them, and the measurement gate decides whether they are built [review S14].
@@ -1131,7 +1171,7 @@ The experiments' own code is the start of the harness line, not extra: 11,379 li
 
 Each step lists what it proves. It is to be built apart from today's product, as the slice design's "Building it apart from today's product" says: `verbatim-next-*` crates, its own executable, pipe and mutex names, never run beside the product.
 
-1. The checks and empty roots, with the ledger, sealing, ratchet, `!Send` rule and stage list. The `compile_fail` doctest fails as it must. Proves: the checks bite before there is code to bend.
+1. The checks and empty roots, with the ledger, sealing, ratchet, `!Send` rule, the `NamesIds` derive and stage list, and the spike of the carry-marked lint (async rule 10). The `compile_fail` doctests fail as they must. Proves: the checks bite before there is code to bend.
 2. The model's messages and their parse at the boundary, with fixtures. Proves: three kinds are enough for the slice's three sequences, and malformed input is refused.
 3. Core's driver, queue, `Out` records and held views, against scripted fake peers. Proves: single ending by construction, held views computed from the records with no stored list, stage names in dumps, and replay from a checkpoint.
 4. The simulator's scheduler, seeds, choices and invariants over Core with fake peers. Proves: determinism, shrinking, and the exactly-one-ending invariant under crashes and hangs.
@@ -1156,15 +1196,22 @@ Taken by Dickson on 2026-11-28 and applied here:
 - The protocol: three message kinds; `Cancel(Late)` and a batch's `Cancel` naming its inner standing requests; the standing host call with `Wants` items and `Resume` (M5); the `Destroyed` and `Barrier` steps; follow items in the tell shape; `Watch` replacement through `replaces`; credit in `WatchFilters` and on `Follow`; a request class on `Ask` only if a desktop run shows the need; named object-model programs as one step kind or several, settled in M13.
 - Threads: the listener callback's element through the root, after the backlog measurement; elements of an abandoned worker lost, with the join by runtime id; spares kept by the supervisor; the speech thread as a second asker of the generic messages, tentatively, to be revisited in M6.
 - One Verbatim outcome against NVDA's explored set, ruled where the set has several.
-- The gated native limiter DLL as the oracle, the model a cross-check; the listener keeping the newer of two coalesced events, a ruled difference (commit deaf7553), entered as a general allowlist rule.
+- The gated native limiter DLL as the oracle, the model a cross-check; the listener keeping the newer of two coalesced events, a ruled difference (commit deaf7553), cited on each step where it applies.
 - No real API anywhere in the replay: Verbatim's remote programs by the ordinary-call path, NVDA's by its local executor; live API tests as a third kind of test beside replay tests and end-to-end scenarios, which stay a full layer.
 - World capture: hooks inside recorded applications for the display model and the IME; UIAccess on the secure desktop; Office installed when its step comes.
-- The harness loading NVDA's GPL binaries, as a GPL-tier test tool; the headless comparison as a CI gate, with the testing standard's wording for allowlisted differences and outcome entries.
+- The harness loading NVDA's GPL binaries, as a GPL-tier test tool; the headless comparison as a CI gate, with the testing standard's wording for ruled differences and outcome entries.
 - The cost of a feature: one property table driving one generated element struct, with table-driven reads and one test constructor; phrases defined where spoken with `msg!`, the English file generated and the other languages checked against its keys; each world's expectation file holding NVDA's output and Verbatim's expected output, with the checks and the change to `testing.md` that implies; generated reference sections not now. The text interface's design (Core's and the extensions') is the next design task, before the prototype grows past the focus slice.
 - The prototype's build order ("Build order for the prototype on the focus slice", and the roadmap's "The rewrite") and the measurement gate's rule: the 95 percent interval on the catch rate against 65 percent, over 40 behavioural mutants with 20 held back, harness defects re-introduced blind, and a pass licensing the focus slice only (Dickson, 2026-11-28).
+- Compile-time rules: `#[derive(NamesIds)]` with every field type declaring whether it holds ids, and id values made only where a reader's message is parsed; obligations as types for the known cross-record pairs; typed answers per step kind from one shared crate; Core's context passed explicitly as `&mut`, with no thread-local and `scoped-tls` dropped; per-read types generated from the property table, the "not asked" state gone; a spike of the carry-marked lint at the prototype's start (a lint-runner dependency such as dylint still needs his yes).
+- Expectations: one complete file for Verbatim beside NVDA's, equal on every step without a ruling cited on it; the allowlist removed; NVDA's file checked against the oracle on Windows.
+- Speech-text stages in a host of their own, asked only by the speech pipeline; Core's queue never waits on a translation.
+- Elements lost with an abandoned worker: the reader's log of lost ids, checked by a simulator invariant; no new reply.
+- Commands cancelled by holding hooks: accepted and logged.
+- The pre-mortem's recommendations filtered by realistic use, as their section gives.
 - The replay's coverage of MSAA, IAccessible2, UI Automation classic and remote, and later Java; math recorded as MathML with MathCAT as it is in the oracle; extensions replayed in the simulator but not compared with NVDA.
 
 Still waiting for him:
+- A lint-runner dependency such as dylint, if Clippy's `await_holding_invalid_type` cannot carry the carry-marked rule (item 6).
 - The names "trace" and "world capture", Claude's, pending his preference.
 - The outcome-rule form: general predicates tied to rulings, judging generated worlds, with per-step entries only for one-off cases; and the snapshot-difference rule class [review 2 M2]. Open by Dickson's choice (2026-11-28): to be revisited during implementation with worked examples on real cases.
 
