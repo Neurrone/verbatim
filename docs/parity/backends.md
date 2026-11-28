@@ -373,6 +373,12 @@ events and 10 events per thread apply to WinEvents only
 (`IAccessibleHandler/orderedWinEventLimiter.py`), and its UIA events
 are only coalesced, one per element and kind per flush, with no count
 limit (`nvdaHelper/local/UIAEventLimiter/rateLimitedEventHandler.cpp`).
+Of two such events, NVDA keeps the older one in its place: its
+`queueEvent` (46 to 51) means to erase the older record, but erases
+through a reference into the map entry it has just overwritten with the
+newer record's position, so the newer record goes. Verbatim's listener
+keeps the newer one, at the newer position (`Waiting::merged`), as
+NVDA's code intends: **different**, kept (Dickson, 2026-11-28).
 Its limiter counts each thread by the thread id the WinEvent carries,
 keeps the newest 4 focus and foreground events of a flush, keeps a
 foreground event among both the focus events and its thread's other
