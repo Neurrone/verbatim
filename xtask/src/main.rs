@@ -10,7 +10,9 @@
 //! tiers (`xtask/src/tiers.rs`) and the scans that test code waits for evidence
 //! (`xtask/src/waits.rs`), that UIA caches are read through shapes alone
 //! (`xtask/src/shapes.rs`), and that the pure owners name nothing impure
-//! (`xtask/src/ownership.rs`), then the documentation check. On Windows it
+//! (`xtask/src/ownership.rs`), that shared state matches its baseline
+//! (`xtask/src/shared_state.rs`) and long-lived state its ledger
+//! (`xtask/src/ledger.rs`), then the documentation check. On Windows it
 //! then runs the workspace-hack checks, rustfmt, and clippy (warnings
 //! denied) and unit tests for the whole workspace; on any other host,
 //! clippy for [`LINUX_CRATES`] alone, then their unit tests instrumented
@@ -98,10 +100,13 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 // The portable modules, built on every host.
 mod coverage;
 mod docs;
+mod items;
+mod ledger;
 mod ownership;
 mod plan;
 mod replay;
 mod shapes;
+mod shared_state;
 mod tiers;
 mod waits;
 
@@ -177,6 +182,7 @@ fn main() -> ExitCode {
         Some("replay") => replay::run(&args[1..]),
         Some("e2e-plan") => plan::run(&args[1..]),
         Some("coverage") => coverage::run(&args[1..]),
+        Some("ownership") => ownership_command(&args[1..]),
         #[cfg(windows)]
         Some("faults") => faults(),
         #[cfg(windows)]
@@ -232,6 +238,9 @@ fn usage() {
     );
     eprintln!(
         "  docs  check that the documents' links and backticked repository paths exist, that docs/readme.md indexes every document under docs, and that each book under books lists its pages and links nothing outside itself"
+    );
+    eprintln!(
+        "  ownership  check shared state against xtask/ownership-baseline/shared-state.txt and the long-lived state against its ledger, as ci does; --update-baseline rewrites both from the code"
     );
     eprintln!(
         "  replay  replay a flight-recorder dump through Core's reducer and print each input with its effects (cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>])"
@@ -373,12 +382,53 @@ fn windows_terminal() -> ExitCode {
     }
 }
 
+/// The workspace root, the folder above xtask's.
+fn workspace_root() -> &'static std::path::Path {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives in the workspace root")
+}
+
+/// `cargo xtask ownership`: the shared-state ratchet and the state ledger,
+/// as `ci` runs them (`xtask/src/shared_state.rs`, `xtask/src/ledger.rs`),
+/// or with `--update-baseline`, both rewritten from the code: the counts,
+/// and the ledger's lines with their categories kept, a new field's empty,
+/// and the known copies that are gone deleted.
+fn ownership_command(rest: &[String]) -> ExitCode {
+    let root = workspace_root();
+    let result = match rest {
+        [] => {
+            let errors: Vec<String> = [shared_state::check(root), ledger::check(root)]
+                .into_iter()
+                .filter_map(Result::err)
+                .collect();
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("\n"))
+            }
+        }
+        [flag] if flag == "--update-baseline" => {
+            shared_state::update(root).and_then(|()| ledger::update(root))
+        }
+        _ => {
+            eprintln!("usage: cargo xtask ownership [--update-baseline]");
+            return ExitCode::from(2);
+        }
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("xtask ownership: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `cargo xtask ci`: every step runs, whichever fails, so one run reports
 /// every failure; the run fails at the end, naming each failed step.
 fn ci() -> ExitCode {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask lives in the workspace root");
+    let root = workspace_root();
     let mut failed: Vec<&'static str> = Vec::new();
     let mut check = |name: &'static str, result: Result<(), String>| {
         if let Err(error) = result {
@@ -412,6 +462,13 @@ fn ci() -> ExitCode {
     check("UIA cached reads through shapes", shapes::check(root));
     println!("xtask ci: pure owners' names");
     check("pure owners' names", ownership::check(root));
+    println!("xtask ci: shared state against its baseline");
+    check(
+        "shared state against its baseline",
+        shared_state::check(root),
+    );
+    println!("xtask ci: long-lived state against its ledger");
+    check("long-lived state against its ledger", ledger::check(root));
     // The determinism rule needs the covered crates, which only the graph
     // the tier step read names.
     if let Some(covered) = covered {

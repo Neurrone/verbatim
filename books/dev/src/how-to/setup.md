@@ -202,6 +202,41 @@ finding:
 
   Comments and strings are not scanned; it reads text, so the modules'
   own tests are the real check.
+- Shared state against its baseline (`xtask/src/shared_state.rs`), which
+  holds CLAUDE.md's rule of one owner per fact: in every crate's `src`
+  folder, but the test harness, its agent, the stand-ins (`mockapp`,
+  `verbatim-term-sim`, `verbatim-test-console`,
+  `verbatim-synth-capture`), `verbatim-faults`, the developer tools
+  (`verbatim-inspect`, `verbatim-event-record`, `verbatim-trace-waits`)
+  and `workspace-hack`, it counts per file the fields and statics, a
+  `thread_local!`'s among them, whose type names an atomic, `Cell`,
+  `RefCell`, `Mutex`, `RwLock`, `OnceLock`, `OnceCell`, `LazyLock` or the
+  outpost's `Lock`, test items and test files left out. Each count must
+  equal `xtask/ownership-baseline/shared-state.txt`'s: a rise or a new
+  file fails it, naming the file's declarations, and so does a fall until
+  the baseline is lowered, so the count only tightens. A genuinely new
+  handle raises the count in the same commit, with a `# reason` line
+  above the entry.
+- Long-lived state against its ledger (`xtask/src/ledger.rs`), which
+  holds the rules of one owner per fact and of a lifecycle as one state
+  value: `xtask/ownership-baseline/state-ledger.txt` names the roots of
+  the state each process keeps (Core's `SrState` and terminal model, the
+  terminal reader and memory, the outpost's `Context` and reducer, the
+  listener, the supervisor's owner, the GUI, the speech manager, the
+  audio device's notices and the hosted synthesizer), and lists every
+  field of every struct and enum each root reaches in its own crate, as
+  `Type.field: type -- category`. A field missing from it, a changed
+  type, a line for a field no longer reached, and a line with no category
+  fail it; the categories are listed in `xtask/src/ledger.rs`. A
+  `known-copy`, a field that copies a fact another record owns, is the
+  debt to remove: each is listed in
+  `xtask/ownership-baseline/known-copies.txt`, which only shrinks, so a
+  new copy fails it.
+
+  `cargo xtask ownership` runs these two alone, and `cargo xtask
+  ownership --update-baseline` rewrites the counts and the ledger from the
+  code, keeping each category, writing a new field's line with none, and
+  deleting the known copies that are gone.
 - Documents' links and paths (`xtask/src/docs.rs`): the documentation
   check below.
 

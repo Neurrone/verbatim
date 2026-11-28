@@ -1,0 +1,1263 @@
+# The ledger of long-lived state, which `cargo xtask ci` checks against the
+# code (xtask/src/ledger.rs): every field of the structs and enums each
+# root below reaches in its own crate, as `Type.field: type -- category`,
+# under the heading of the file that declares it. The categories, and when
+# each needs a reason after it, are listed in xtask/src/ledger.rs. A
+# `known-copy` copies a fact another record owns; it is allowed only as
+# xtask/ownership-baseline/known-copies.txt lists it, and that list only
+# shrinks. `cargo xtask ownership --update-baseline` rewrites the lines
+# from the code, keeping each category; comments are kept only here, above
+# the roots.
+
+root crates/verbatim-core/src/state.rs SrState
+root crates/verbatim-core/src/terminal_model.rs TerminalModel
+root crates/verbatim-text/src/terminal_reading.rs TerminalReader
+root crates/verbatim-text/src/terminal_reading.rs Screen
+root crates/verbatim-text/src/terminal_rows.rs TerminalMemory
+root crates/verbatim-text/src/terminal_rows.rs Screen
+root crates/verbatim-outpost/src/outpost/mod.rs Context
+root crates/verbatim-outpost-logic/src/lib.rs Reducer
+root crates/verbatim-listener/src/listener.rs Listener
+root crates/verbatim-listener-logic/src/kept.rs KeptElements
+root crates/verbatim-supervisor/src/owner.rs Owner
+root crates/verbatim-gui/src/lib.rs GuiCore
+root crates/verbatim-gui/src/lifecycle.rs Lifecycle
+root crates/verbatim-speech/src/manager.rs SpeechManager
+root crates/verbatim-audio/src/notices.rs DeviceNotices
+root crates/verbatim-audio/src/silent.rs SilentDevice
+root crates/verbatim-synth-hosted/src/lib.rs HostedSynth
+
+## crates/verbatim-audio/src/notices.rs
+DeviceNotices.inner: Arc<Inner> -- owner
+Inner.default_changed: AtomicBool -- owner
+Inner.available: AtomicBool -- owner
+Inner.property_changed: AtomicBool -- known-copy a flag beside Inner.outcome; the notices' outcome should own whether the device's property changed
+Inner.outcome: Mutex<Outcome> -- owner
+Inner.waker: Waker -- handle
+Outcome::Failed.retry_at: Option<Instant> -- owner
+
+## crates/verbatim-audio/src/silent.rs
+SilentDevice.queued: f64 -- owner
+SilentDevice.running_since: Option<Instant> -- owner
+SilentDevice.wake: Arc<(Mutex<bool>, Condvar)> -- handle
+SilentDevice.refused: bool -- known-copy a flag beside the device's open state (SilentDevice.running_since); the device's one lifecycle value should own whether its format was refused
+
+## crates/verbatim-core/src/announcements/mod.rs
+Announcement.tell: Event -- owner
+Announcement.kind: Kind -- owner
+Announcement.fence: Fence -- owner
+Kind::Notification.sender: RuntimeId -- handle
+Kind::Notification.text: String -- owner
+Kind::Notification.kind: NotificationKind -- owner
+Kind::Notification.processing: NotificationProcessing -- owner
+Kind::Notification.activity: String -- owner
+Kind::Toast.0: Kept -- owner
+Kind::UiaSelection.0: Kept -- owner
+Kind::UiaSelection.1: crate::changes::AtArrival -- owner
+Kind::Alert.ids: MsaaIds -- owner
+Kind::Alert.window: RequestWindow -- owner
+Kind::Alert.moved: bool -- owner
+Kind::DesktopName.ids: MsaaIds -- owner
+Kind::Show.ids: MsaaIds -- owner
+Kind::Show.window: RequestWindow -- owner
+Kept.token: ElementToken -- owner
+Kept.runtime_id: RuntimeId -- owner
+Kept.listener: u64 -- owner
+
+## crates/verbatim-core/src/announcements/selection.rs
+Item::Read.0: NodeRead -- owner
+Item::Read.1: bool -- owner
+
+## crates/verbatim-core/src/caret_tell.rs
+Target::System.0: MsaaIds -- owner
+Target::Uia.0: RuntimeId -- owner
+CaretTell.tell: Event -- owner
+CaretTell.target: Target -- owner
+CaretTell.fence: Fence -- owner
+
+## crates/verbatim-core/src/changes.rs
+MsaaChange.tell: Event -- owner
+MsaaChange.ids: MsaaIds -- owner
+MsaaChange.window: RequestWindow -- owner
+MsaaChange.fence: crate::keys::entry::Fence -- owner
+MsaaChange.accepted: Acceptance -- owner
+UiaChange.tell: Event -- owner
+UiaChange.runtime_id: RuntimeId -- owner
+UiaChange.property: PropertyId -- owner
+UiaChange.accepted: Acceptance -- owner
+UiaChange.fence: crate::keys::entry::Fence -- owner
+UiaChange.value: Option<PropertyValue> -- owner
+UiaChange.at_arrival: AtArrival -- owner
+
+## crates/verbatim-core/src/desktop.rs
+DesktopName.name: String -- owner
+DesktopName.trace_id: TraceId -- owner
+DesktopName.due_us: u64 -- owner
+
+## crates/verbatim-core/src/entries.rs
+InputTrace.0: TraceId -- owner
+UiaFocus.tell: Event -- owner
+UiaFocus.token: ElementToken -- owner
+UiaFocus.runtime_id: RuntimeId -- owner
+UiaFocus.listener: u64 -- owner
+UiaFocus.alt_down: bool -- owner
+UiaFocus.fence: Fence -- owner
+Candidate.tell: Event -- owner
+Candidate.ids: MsaaIds -- owner
+Candidate.window: RequestWindow -- owner
+Candidate.fence: Fence -- owner
+Candidate.confirmation: crate::focus::validity::Confirmation -- owner
+Entry::UiaFocus.0: Box<UiaFocus> -- owner
+Entry::Candidate.0: Box<Candidate> -- owner
+Entry::Run.0: Vec<Candidate> -- owner
+Entry::Menu.0: Box<Candidate> -- owner
+Entry::MenuCheck.0: Box<MenuCheck> -- owner
+Entry::CurrentFocus.0: Box<CurrentFocus> -- owner
+Entry::MsaaChange.0: Box<crate::changes::MsaaChange> -- owner
+Entry::UiaChange.0: Box<crate::changes::UiaChange> -- owner
+Entry::Progress.0: Box<crate::progress::ProgressTell> -- owner
+Entry::Caret.0: Box<crate::caret_tell::CaretTell> -- owner
+Entry::ForegroundMarker.window: WindowHandle -- owner
+Entry::ForegroundMarker.root_owner: WindowHandle -- owner
+Entry::ForegroundMarker.fence: Fence -- owner
+Entry::Press.0: Box<PressEntry> -- owner
+Entry::Mark.0: SpeechMark -- owner
+Entry::Mark.1: Fence -- owner
+Entry::SayAllRead.0: TraceId -- owner
+Entry::SayAllRead.1: Fence -- owner
+Entry::Announcement.0: Box<crate::announcements::Announcement> -- owner
+Entry::TerminalSpeech.0: Box<crate::terminal::reading::SpeechEntry> -- owner
+
+## crates/verbatim-core/src/event_queue/driver.rs
+State.facts: F -- owner
+State.queue: Queue<E, F> -- owner
+Queue.front: Option<Front<E>> -- owner
+Queue.waiting: VecDeque<Item<E>> -- request-table
+Queue.table: Table -- request-table
+Queue.readers: BTreeMap<Reader, Instance> -- known-copy copies each reader's running instance, which the supervisor's Record (Application.stage, Record.listener) owns
+Queue.foreground: Option<Foreground> -- owner
+Queue.backend: BackendCache -- cache-of-application-data
+Queue.checkpoint: Option<Box<Checkpoint<E, F>>> -- owner
+Queue.timers: Vec<(u64, E)> -- owner
+Queue.record: crate::supervisor::record::Record -- owner
+Checkpoint.base: State<E, F> -- owner
+Checkpoint.started: Now -- owner
+Checkpoint.asked: Vec<Question> -- request-table
+Checkpoint.answers: Vec<(Now, Ending)> -- owner
+Front.entry: E -- owner
+Front.answers: Vec<Shown> -- owner
+Front.asked: Option<RequestNumber> -- request-table
+Shown.0: String -- owner
+
+## crates/verbatim-core/src/event_queue/limiter.rs
+Item::One.0: E -- owner
+Item::Run.0: Vec<E> -- owner
+Item::Menu.entry: E -- owner
+Item::Menu.moved: bool -- owner
+
+## crates/verbatim-core/src/event_queue/mod.rs
+Route::Reader.0: Reader -- owner
+RequestWindow.handle: WindowHandle -- owner
+RequestWindow.top_level: WindowHandle -- owner
+RequestWindow.root_owner: WindowHandle -- owner
+RequestWindow.process: Pid -- owner
+RequestWindow.thread: u32 -- owner
+RequestWindow.by_class: Option<Backend> -- owner
+Foreground.window: WindowHandle -- owner
+Foreground.root_owner: WindowHandle -- owner
+Foreground.process: Option<Pid> -- owner
+Foreground.thread: u32 -- owner
+Foreground.by_class: Option<Backend> -- owner
+Foreground.ghost: Option<WindowHandle> -- owner
+Foreground.console: bool -- owner
+Foreground.integrity: Option<u32> -- owner
+Foreground.own_integrity: Option<u32> -- owner
+
+## crates/verbatim-core/src/event_queue/request.rs
+Stamps.began_us: u64 -- owner
+Stamps.ended_us: u64 -- owner
+Ran::Worker.0: Stamps -- owner
+
+## crates/verbatim-core/src/event_queue/table.rs
+Asker.0: u64 -- owner
+Owner::Outside.0: Asker -- owner
+Owner::Facts.0: u64 -- owner
+Stage::Out.to: Instance -- owner
+Stage::Out.probing: Option<u64> -- owner
+Live.reader: Route -- owner
+Live.window: RequestWindow -- owner
+Live.due_us: u64 -- owner
+Live.request: Question -- request-table
+Live.owner: Owner -- owner
+Live.stage: Stage -- owner
+Ending::Answered.0: WireOutcome -- owner
+Ending::Answered.1: Ran -- owner
+Ending::InFront.0: Front -- owner
+Ending::NoLongerAwaited.0: CancelReason -- owner
+Table.last: u64 -- owner
+Table.live: BTreeMap<RequestNumber, Live> -- request-table
+Table.late: BTreeMap<RequestNumber, Instance> -- request-table
+Table.recovery: BTreeMap<u64, RequestWindow> -- request-table
+Table.round_due_us: Option<u64> -- owner
+
+## crates/verbatim-core/src/focus/backend.rs
+WindowKey.handle: u64 -- owner
+WindowKey.thread: u32 -- owner
+Probed.backend: Backend -- owner
+Probed.began_us: u64 -- owner
+BackendCache.probed: BTreeMap<WindowKey, Probed> -- cache-of-application-data
+
+## crates/verbatim-core/src/focus/follow.rs
+Named.generation: OutpostId -- owner
+Named.followed: Followed -- owner
+Named.window: RequestWindow -- owner
+Named.node_window: WindowHandle -- owner
+Follows.named: BTreeMap<Pid, Named> -- known-copy copies each outpost's generation, which the supervisor's Record owns (Running.generation), and the followed focus's window, which its Kept.asked holds
+
+## crates/verbatim-core/src/focus/menus.rs
+InFront::Window.0: RequestWindow -- owner
+MenuCheck.in_front: InFront -- owner
+MenuCheck.committed: Option<NodeId> -- owner
+MenuCheck.end: CheckedEnd -- owner
+MenuCheck.trace_id: TraceId -- owner
+MenuCheck.fence: crate::keys::entry::Fence -- owner
+
+## crates/verbatim-core/src/focus/plain.rs
+PlainKind::Ghost.stands_for: WindowHandle -- owner
+PlainKind::Ghost.name: String -- owner
+PlainKind::Ghost.unavailable: bool -- owner
+PlainObject.generation: u64 -- owner
+PlainObject.window: WindowHandle -- owner
+PlainObject.kind: PlainKind -- owner
+PlainObject.process: Pid -- owner
+PlainObject.thread: u32 -- owner
+PlainReader.generations: u64 -- owner
+PlainReader.object: Option<PlainObject> -- owner
+
+## crates/verbatim-core/src/focus/retake.rs
+CurrentFocus.why: Why -- owner
+CurrentFocus.window: RequestWindow -- owner
+CurrentFocus.trace_id: TraceId -- owner
+CurrentFocus.fence: crate::keys::entry::Fence -- owner
+
+## crates/verbatim-core/src/focus/shown.rs
+Postponed.dialog: RequestWindow -- owner
+Postponed.fence: Fence -- owner
+
+## crates/verbatim-core/src/focus/validity.rs
+CandidateFacts::Found.focused: Option<bool> -- owner
+CandidateFacts::Found.role: Option<Role> -- owner
+Confirmation::Read.0: CandidateFacts -- owner
+
+## crates/verbatim-core/src/focus/versions.rs
+ReadBy::Uia.runtime_id: RuntimeId -- owner
+ReadBy::Uia.token: T -- owner
+ReadBy::Msaa.event: Option<MsaaIds> -- handle
+ReadBy::Msaa.held_child: i32 -- owner
+Place.window: WindowHandle -- owner
+Place.top_level: WindowHandle -- owner
+Place.root_owner: WindowHandle -- owner
+Place.ancestor_windows: Arc<[WindowHandle]> -- owner
+LastFocus.read_by: HeldBy -- owner
+LastFocus.place: Place -- owner
+LastFocus.role: Role -- owner
+LastFocus.since: Option<Fence> -- owner
+Kept.read_by: ReadBy -- owner
+Kept.place: Place -- owner
+Kept.asked: crate::event_queue::RequestWindow -- owner
+Kept.foreground: Option<NodeId> -- known-copy copies the foreground record SrState.foreground (crate::foreground::Foreground) owns, as it stood when the focus entered
+Kept.value_from_selection: bool -- owner
+Kept.selection: crate::text_facts::SelectionFacts -- owner
+Kept.console_terminal: bool -- owner
+LineEntry.snapshot: NodeSnapshot -- cache-of-application-data
+LineEntry.runtime_id: Option<RuntimeId> -- owner
+LineEntry.simple_child: bool -- owner
+Focus.context: FocusContext -- owner
+Focus.kept: Kept -- owner
+Focus.line: Arc<[LineEntry]> -- owner
+Committed::Read.0: Box<Focus> -- owner
+Committed::Ended.0: Box<Focus> -- owner
+Versions.committed: Committed -- owner
+Versions.last: Option<LastFocus> -- owner
+Versions.postponed: Option<super::shown::Postponed> -- owner
+
+## crates/verbatim-core/src/foreground.rs
+Foreground.object: Option<ObjectKey> -- owner
+Foreground.entered: Option<WindowHandle> -- owner
+
+## crates/verbatim-core/src/input_desktop.rs
+InputDesktop::ReturnPending.due_us: u64 -- owner
+Desktop.input: InputDesktop -- owner
+Desktop.lock: SessionLock -- owner
+Desktop.switches_away: u32 -- owner
+
+## crates/verbatim-core/src/keys/entry.rs
+Fence.0: KeySeq -- owner
+Arrivals.newest: KeySeq -- owner
+Arrivals.cut: KeySeq -- owner
+PressEntry.trace_id: TraceId -- owner
+PressEntry.press: Press -- owner
+PressEntry.fence: Fence -- owner
+
+## crates/verbatim-core/src/keys/strokes.rs
+InLine::Held.key: KeySeq -- owner
+InLine::Held.stroke: HeldStroke -- owner
+InLine::Held.release_at_us: Option<u64> -- owner
+InLine::Held.passed: bool -- owner
+InLine::Held.terminal: Option<TerminalKey> -- owner
+InLine::Deferred.stroke: Stroke -- owner
+InLine::Deferred.pressed: bool -- owner
+InLine::Keys.0: Vec<TerminalKey> -- owner
+StrokeLine.line: VecDeque<InLine> -- owner
+StrokeLine.dropped: BTreeSet<KeySeq> -- owner
+StrokeLine.held_reached_us: u64 -- owner
+
+## crates/verbatim-core/src/keys/terminal.rs
+TerminalKey.node: NodeId -- owner
+TerminalKey.kind: TerminalKeyKind -- owner
+TerminalKey.trace: TraceId -- owner
+TerminalKey.key: KeySeq -- owner
+
+## crates/verbatim-core/src/now.rs
+Now.0: u64 -- owner
+
+## crates/verbatim-core/src/progress.rs
+ProgressTell.tell: Event -- owner
+ProgressTell.runtime_id: RuntimeId -- owner
+ProgressTell.percent: Percent -- owner
+ProgressTell.place: (i32, i32) -- owner
+ProgressTell.accepted: Acceptance -- owner
+ProgressTell.fence: crate::keys::entry::Fence -- owner
+BarRead::Reading.token: u64 -- owner
+BarRead::ReadingNewer.token: u64 -- owner
+BarRead::ReadingNewer.window: RequestWindow -- owner
+
+## crates/verbatim-core/src/say_all.rs
+QueueRun.trace: TraceId -- owner
+QueueRun.key: Option<KeySeq> -- owner
+QueueRun.window: RequestWindow -- owner
+QueueRun.read: QueueRead -- cache-of-application-data
+
+## crates/verbatim-core/src/state.rs
+FocusContext.source: Pid -- known-copy copies the application the committed focus's Kept.asked (RequestWindow.process, crate::focus::versions) names
+FocusContext.window: Option<WindowFacts> -- known-copy copies the windows the committed focus's Kept.place (crate::focus::versions) holds
+FocusContext.snapshot: NodeSnapshot -- cache-of-application-data
+FocusContext.reported_focused: bool -- owner
+FocusContext.trace_id: Option<TraceId> -- owner
+FocusContext.spoken: SpokenRecord -- own-outbound-record
+FocusContext.reported_format: TextAttributes -- owner
+FocusContext.value_read_us: Option<u64> -- owner
+FocusContext.caret: Option<CaretContext> -- owner
+SpokenRecord.name: Option<String> -- owner
+SpokenRecord.value: Option<String> -- owner
+SpokenRecord.description: Option<String> -- owner
+SpokenRecord.states: StateSet -- owner
+SpokenRecord.ancestors: Arc<[(NodeId, StateSet)]> -- owner
+Navigator.at: NavigatorAt -- owner
+Navigator.text: ReviewText -- owner
+NavigatorAt::Object.object: Box<NodeSnapshot> -- cache-of-application-data
+NavigatorAt::Object.window: Option<crate::event_queue::RequestWindow> -- owner
+ReviewText::Flat.0: FlatPosition -- owner
+ReviewText::At.0: ReviewPosition -- owner
+ReviewText::Point.0: TextPosition -- owner
+FlatPosition.offset: usize -- owner
+FlatPosition.column: usize -- owner
+ReviewPosition.line: SharedChunk -- owner
+ReviewPosition.offset: usize -- owner
+ReviewPosition.column: usize -- owner
+CaretContext.line: SharedChunk -- owner
+CaretContext.selection: Option<CaretSelection> -- owner
+StartMarker.node: NodeId -- owner
+StartMarker.ends: MarkerEnds -- owner
+MarkerEnds::Text.0: Marked<TextPosition> -- owner
+MarkerEnds::Flat.0: Marked<usize> -- owner
+Marked.at: P -- owner
+Marked.after: P -- owner
+Marked.selected_to: Option<(P, P)> -- owner
+BufferedPiece.chunk: SharedChunk -- owner
+BufferedPiece.start: u32 -- owner
+BufferedPiece.end: u32 -- owner
+BufferedPiece.marked: bool -- owner
+UnitStart.chunk: SharedChunk -- owner
+UnitStart.offset: u32 -- owner
+QueuedMark.mark: SpeechMark -- owner
+QueuedMark.unit: Option<UnitStart> -- owner
+QueuedMark.opens: bool -- owner
+SayAll.node: NodeId -- owner
+SayAll.moves_caret: bool -- owner
+SayAll.start: verbatim_model::TextPoint -- owner
+SayAll.unit: TextUnit -- owner
+SayAll.last_chunk: Option<(TextPosition, TextUnit)> -- owner
+SayAll.queued: std::collections::VecDeque<QueuedMark> -- owner
+SayAll.buffer: std::collections::VecDeque<Vec<BufferedPiece>> -- owner
+SayAll.held: Vec<BufferedPiece> -- owner
+SayAll.held_units: usize -- owner
+SayAll.finished: bool -- owner
+SayAll.display_held: bool -- owner
+SayAll.run: crate::say_all::QueueRun -- owner
+CellMemory.table: Option<TableId> -- owner
+CellMemory.row: Option<u32> -- owner
+CellMemory.column: Option<u32> -- owner
+LastToast.id: ToastId -- owner
+LastToast.at_us: u64 -- owner
+SrState.foreground: Foreground -- owner
+SrState.desktop_name: Option<crate::desktop::DesktopName> -- owner
+SrState.navigator: Option<Navigator> -- owner
+SrState.settings: ReaderSettings -- configuration
+SrState.toggle_keys: std::collections::VecDeque<(verbatim_model::LockKey, u64)> -- owner
+SrState.start_marker: Option<StartMarker> -- owner
+SrState.say_all: Option<SayAll> -- owner
+SrState.typed_word: String -- owner
+SrState.next_mark: u64 -- owner
+SrState.reported: ReportedDetails -- own-outbound-record
+SrState.terminal: crate::terminal::TerminalSpeechState -- owner
+SrState.terminals: crate::terminal_model::Terminals -- owner
+SrState.terminal_focus: crate::terminal::reading::TerminalFocus -- owner
+SrState.next_terminal_anchor: u64 -- owner
+SrState.last_tree_level: Option<u32> -- owner
+SrState.cell_memory: CellMemory -- owner
+SrState.progress_reported: Vec<((i32, i32), u32)> -- own-outbound-record
+SrState.bar_reads: std::collections::BTreeMap<crate::progress::BarKey, crate::progress::BarRead> -- cache-of-application-data
+SrState.wants: crate::wants::Wants -- owner
+SrState.last_toast: Option<LastToast> -- owner
+SrState.exiting: bool -- owner
+SrState.versions: crate::focus::versions::Versions -- owner
+SrState.follows: crate::focus::follow::Follows -- owner
+SrState.plain: crate::focus::plain::PlainReader -- owner
+SrState.ignored: Vec<verbatim_model::Pid> -- owner
+SrState.queue_trace: crate::entries::InputTrace -- owner
+SrState.run_executed: bool -- known-copy copies whether the entry the event queue ran last executed a focus, which the queue's own record of that entry owns
+SrState.arrivals: crate::keys::entry::Arrivals -- owner
+SrState.strokes: crate::keys::strokes::StrokeLine -- owner
+SrState.alt_down: bool -- owner
+SrState.edit_selection: Option<verbatim_model::EditSelection> -- owner
+SrState.desktop: crate::input_desktop::Desktop -- owner
+SrState.queue: crate::event_queue::Queue<crate::entries::Entry, SrState> -- owner
+
+## crates/verbatim-core/src/supervisor/policy.rs
+Backoff.failures: u32 -- owner
+
+## crates/verbatim-core/src/supervisor/record.rs
+Stage::Starting.0: Running -- owner
+Stage::Ready.0: Running -- owner
+Stage::WaitingOut.due_us: u64 -- owner
+Running.generation: u64 -- owner
+Running.started_us: u64 -- owner
+Running.pong_us: u64 -- owner
+Application.stage: Stage -- owner
+Application.backoff: Backoff -- owner
+Record.applications: BTreeMap<Pid, Application> -- owner
+Record.listener: Option<u64> -- owner
+Record.own: Option<Pid> -- owner
+Record.spares_ready: usize -- owner
+
+## crates/verbatim-core/src/terminal.rs
+TerminalSpeechState.waiting: VecDeque<Waiting> -- request-table
+TerminalSpeechState.pacing: Pacing -- owner
+TerminalSpeechState.ahead: VecDeque<(SpeechMark, bool)> -- owner
+TerminalSpeechState.sounding: Option<SpeechMark> -- owner
+TerminalSpeechState.trace: Option<TraceId> -- owner
+TerminalSpeechState.key: Option<KeySeq> -- owner
+TerminalSpeechState.cut_at_ms: u64 -- owner
+Pacing::Speaking.left: usize -- owner
+Waiting::Line.0: String -- owner
+Waiting::Line.1: LineKind -- owner
+Waiting::Skipped.0: Skipped -- owner
+LineKind::Line.0: Counted -- owner
+
+## crates/verbatim-core/src/terminal/items.rs
+TerminalItem::Output.0: String -- owner
+TerminalItem::Growth.0: String -- owner
+TerminalItem::Skipped.0: Skipped -- owner
+TerminalItem::Echo.0: String -- owner
+TerminalItem::Caret.unit: TerminalUnit -- owner
+TerminalItem::Caret.text: String -- owner
+TerminalItem::Gained.0: String -- owner
+TerminalItem::Lost.0: String -- owner
+TerminalItem::Answer.0: String -- owner
+TerminalItem::Suggestion.0: String -- owner
+TerminalKeyKind::Typed.0: String -- owner
+TerminalKeyKind::Caret.0: TerminalUnit -- owner
+Skipped::Count.0: u32 -- owner
+Skipped::MoreThan.0: u32 -- owner
+Skipped::About.0: u32 -- owner
+
+## crates/verbatim-core/src/terminal/reader.rs
+WindowRead::From.start: TextAnchor -- owner
+WindowRead::From.height: u32 -- owner
+WindowRead::From.count: bool -- owner
+WindowRead::HistoryBlock.height: NonZeroU32 -- owner
+WindowAsk.read: WindowRead -- cache-of-application-data
+WindowAsk.colours: bool -- owner
+WindowAsk.starting: bool -- owner
+WindowAsk.output: bool -- owner
+
+## crates/verbatim-core/src/terminal/reading.rs
+Terminal.node: NodeId -- owner
+Terminal.window: RequestWindow -- owner
+Terminal.console: bool -- owner
+FollowOut.token: u64 -- owner
+FollowOut.resent: bool -- owner
+FocusedTerminal::Baselining.terminal: Terminal -- owner
+FocusedTerminal::Baselining.follow: Option<FollowOut> -- owner
+FocusedTerminal::Baselining.read: Option<(u64, WindowAsk)> -- cache-of-application-data
+FocusedTerminal::Baselining.told: Option<u64> -- own-outbound-record
+FocusedTerminal::WaitingForWindow.terminal: Terminal -- owner
+FocusedTerminal::WaitingForWindow.told: Option<u64> -- own-outbound-record
+FocusedTerminal::Modelled.terminal: Terminal -- owner
+FocusedTerminal::Modelled.follow: Option<FollowOut> -- owner
+FocusedTerminal::Modelled.reading: Reading -- owner
+Mark::Waited.release: bool -- owner
+Reading::Behind.told: u64 -- own-outbound-record
+Reading::Out.token: u64 -- owner
+Reading::Out.mark: Mark -- owner
+Reading::Out.ask: WindowAsk -- owner
+Reading::Out.again: Option<u64> -- owner
+Reading::Holding.told: Option<u64> -- own-outbound-record
+Reading::Releasing.token: u64 -- owner
+Reading::Releasing.told: Option<u64> -- own-outbound-record
+Reading::Stalled.holding: bool -- owner
+TerminalFocus.focused: FocusedTerminal -- owner
+TerminalFocus.entry_read: bool -- owner
+SpeechEntry.node: NodeId -- owner
+SpeechEntry.generation: u64 -- owner
+SpeechEntry.items: Vec<TerminalItem> -- owner
+SpeechEntry.followed: bool -- owner
+SpeechEntry.started_ms: u64 -- owner
+SpeechEntry.silent: bool -- owner
+SpeechEntry.of: Of -- owner
+SpeechEntry.key: terminal_model::SpeechKey -- owner
+SpeechEntry.trace: TraceId -- owner
+SpeechEntry.fence: Fence -- owner
+Of::Output.token: u64 -- owner
+
+## crates/verbatim-core/src/terminal_model.rs
+PendingKey.kind: TerminalKeyKind -- owner
+PendingKey.at_ms: u64 -- owner
+PendingKey.trace: TraceId -- owner
+PendingKey.seq: KeySeq -- owner
+MarkLine.hash: u64 -- owner
+MarkLine.text: String -- owner
+MarkLine.rows: u32 -- owner
+LastRead.ended_ms: u64 -- owner
+LastRead.coloured: bool -- owner
+LastRead.sends: u64 -- own-outbound-record
+TerminalModel.node: NodeId -- owner
+TerminalModel.reader: Arc<TerminalReader> -- owner
+TerminalModel.pending: VecDeque<PendingKey> -- request-table
+TerminalModel.generation: u64 -- owner
+TerminalModel.start: Option<TextAnchor> -- owner
+TerminalModel.owed: Option<TerminalScope> -- owner
+TerminalModel.last_read: Option<LastRead> -- cache-of-application-data
+TerminalModel.sends: u64 -- own-outbound-record
+TerminalModel.started_us: u64 -- owner
+TerminalModel.given: Given -- owner
+TerminalModel.mark_lines: VecDeque<MarkLine> -- known-copy copies the command marks the terminal memory owns (Screen.marks and Aside.marks in verbatim-text's terminal_rows.rs)
+TerminalModel.pending_mark: Option<(Anchor, u64)> -- known-copy a stage of the newest mark the terminal memory owns (Screen.newest_mark in verbatim-text's terminal_rows.rs), kept beside it
+TerminalModel.places: VecDeque<(u64, u64)> -- known-copy copies the places the terminal memory owns (Screen.places in verbatim-text's terminal_rows.rs)
+Given::Last.0: u64 -- owner
+Terminals.models: Vec<TerminalModel> -- owner
+Terminals.next_generation: u64 -- owner
+SpeechKey.trace: Option<TraceId> -- owner
+SpeechKey.after: Option<KeySeq> -- owner
+
+## crates/verbatim-core/src/text_facts.rs
+SelectionFacts.baseline: Option<TextAnchor> -- owner
+SelectionFacts.text_changed: bool -- owner
+
+## crates/verbatim-core/src/wants.rs
+Wanted.token: Option<u64> -- owner
+Wanted.reader: Reader -- owner
+Wanted.window: RequestWindow -- owner
+Wanted.request: Question -- request-table
+Wants.tokens: u64 -- owner
+Wants.wanted: Vec<Wanted> -- owner
+
+## crates/verbatim-gui/src/bridge.rs
+GuiThread._not_send: PhantomData<*const ()> -- owner
+
+## crates/verbatim-gui/src/lib.rs
+GuiCommand::ShowMessage.title: String -- owner
+GuiCommand::ShowMessage.text: String -- owner
+GuiCommand::OpenShellItemList.0: ShellItemKind -- owner
+GuiEvent::ShellItemGone.0: String -- owner
+GuiEvent::ShellItemUnclickable.0: String -- owner
+GuiEvent::ShellItemClickFailed.0: String -- owner
+GuiMessage::Command.0: GuiCommand -- owner
+GuiMessage::ShellItems.0: ShellItemKind -- owner
+GuiMessage::ShellItems.1: Option<Vec<shell_items::ShellItem>> -- owner
+GuiMessage::SynthesizerSwitched.0: String -- owner
+GuiMessage::SynthesizerSwitched.1: Result<(), verbatim_speech::SynthError> -- owner
+GuiMessage::SettingsAnswered.0: verbatim_speech::SettingsAnswer -- owner
+GuiHandle.sender: Sender<GuiMessage> -- handle
+GuiCore.gui: GuiThread -- owner
+GuiCore.host: Arc<dyn SpeechSettingsHost> -- handle
+GuiCore.theme_host: Arc<dyn ThemeHost> -- handle
+GuiCore.theme: RefCell<Option<ThemePanel>> -- owner
+GuiCore.terminal_host: Arc<dyn TerminalHost> -- handle
+GuiCore.terminal: RefCell<Option<TerminalPanel>> -- owner
+GuiCore.shell_host: Arc<dyn ShellItemsHost> -- handle
+GuiCore.events: Sender<GuiEvent> -- handle
+GuiCore.handle: GuiHandle -- handle
+GuiCore.receiver: Receiver<GuiMessage> -- handle
+GuiCore.on_ready: RefCell<Option<OnReady>> -- owner
+GuiCore.lifecycle: RefCell<Lifecycle> -- owner
+GuiCore.speech: RefCell<SpeechControls> -- owner
+GuiCore.switching: std::cell::Cell<bool> -- owner
+GuiCore.list_buttons: RefCell<Option<ListDialogButtons>> -- owner
+
+## crates/verbatim-gui/src/lifecycle.rs
+Lifecycle.menu_open: bool -- known-copy a flag beside Lifecycle.shell_list; the GUI's one lifecycle state value should own whether the menu is open
+Lifecycle.settings_open: bool -- known-copy a flag beside Lifecycle.shell_list; the GUI's one lifecycle state value should own whether the settings dialog is open
+Lifecycle.shell_list: ShellList -- owner
+Lifecycle.message_boxes: u32 -- owner
+Lifecycle.shutting_down: bool -- known-copy a flag beside Lifecycle.shell_list; the GUI's one lifecycle state value should own the shutdown stage
+
+## crates/verbatim-gui/src/list_dialog.rs
+ListDialogButtons.callbacks: Vec<OnActivate> -- owner
+
+## crates/verbatim-gui/src/settings.rs
+SpeechControls.generation: u32 -- owner
+SpeechControls.descriptors: Vec<SettingDescriptor> -- owner
+SpeechControls.last_change: u64 -- owner
+SpeechControls.outstanding: Vec<(SettingId, u64, SettingValue)> -- request-table
+
+## crates/verbatim-gui/src/terminal_panel.rs
+TerminalChange.report_output: bool -- owner
+TerminalChange.full_lines: TerminalLines -- owner
+TerminalChange.last_lines: TerminalLines -- owner
+TerminalChange.speak_passwords: bool -- owner
+TerminalPanel.host: Arc<dyn TerminalHost> -- handle
+TerminalPanel.labels: TerminalLabels -- owner
+TerminalPanel.values: TerminalChange -- owner
+
+## crates/verbatim-gui/src/theme_panel.rs
+SoundChoice::Tone.0: Tone -- owner
+SoundChoice::File.0: String -- owner
+Pending::Set.0: Indication -- owner
+Pending::Set.1: IndicationSetting -- owner
+Pending::AddSound.0: Indication -- owner
+Pending::AddSound.1: PathBuf -- owner
+Selection::Installed.0: usize -- owner
+Selection::InstalledBesideMissing.0: usize -- owner
+ThemePanel.host: Arc<dyn ThemeHost> -- handle
+ThemePanel.labels: ThemeLabels -- owner
+ThemePanel.themes: Vec<LoadedTheme> -- owner
+ThemePanel.selected: Selection -- owner
+ThemePanel.shown_sounds: Vec<SoundChoice> -- owner
+ThemePanel.edited: BTreeMap<String, Theme> -- owner
+ThemePanel.options: ThemeOptions -- configuration
+ThemePanel.committed: (String, ThemeOptions) -- configuration
+ThemePanel.catalogue: Vec<Indication> -- owner
+ThemePanel.indication: Option<Indication> -- owner
+ThemePanel.filter: String -- owner
+ThemePanel.pending: Option<Pending> -- request-table
+
+## crates/verbatim-listener-logic/src/kept.rs
+Kept::Told.element: E -- owner
+Kept::Told.runtime_id: RuntimeId -- owner
+Kept::Told.focus_kind: bool -- owner
+Kept::InRead.element: E -- owner
+Kept::InRead.runtime_id: RuntimeId -- owner
+Kept::InRead.focus: bool -- owner
+Kept::InRead.request: u64 -- request-table
+Kept::Read.element: E -- owner
+Kept::Read.runtime_id: RuntimeId -- owner
+KeptElements.kept: BTreeMap<ElementToken, Kept<E>> -- owner
+
+## crates/verbatim-listener/src/listener.rs
+Outgoing.sender: Sender<Waiting> -- handle
+Outgoing._ignored: IgnoredProcesses -- owner
+Outgoing.uia_installed: AtomicBool -- owner
+Outgoing.readiness: Mutex<Readiness> -- owner
+Outgoing.clock: Clock -- owner
+Outgoing.tells: Arc<Tells> -- owner
+Readiness::Starting.0: Vec<u64> -- owner
+Clock.0: fn() -> u64 -- owner
+Waiting.urgent: VecDeque<ListenerToCore> -- owner
+Waiting.queued: VecDeque<(Option<TellKey>, ListenerToCore)> -- owner
+Waiting.reported: Reported -- own-outbound-record
+Listener.outgoing: Arc<Outgoing> -- owner
+Listener.readers: Arc<Readers<UiaReading>> -- owner
+Listener.kept: Arc<Kept> -- owner
+Listener.checks: Arc<Checks> -- owner
+Listener.registering: JoinHandle<Option<Registration>> -- handle
+Listener.nudger: Nudger -- owner
+Listener._event_thread: EventThread -- handle
+
+## crates/verbatim-listener/src/listener/asked.rs
+UiaReading.outgoing: Arc<Outgoing> -- owner
+UiaReading.kept: Arc<Kept> -- owner
+UiaReading.readability: WindowReadabilityReader -- owner
+UiaReading.read_at_event: MsaaReads -- handle
+
+## crates/verbatim-listener/src/listener/checking.rs
+CheckEvent.trace_id: TraceId -- owner
+CheckEvent.kind: EventKind -- owner
+CheckEvent.process: Pid -- owner
+CheckEvent.at_us: u64 -- owner
+CheckEvent.element: Agile<ListenerEvent> -- owner
+CheckEvent.runtime_id: RuntimeId -- owner
+CheckEvent.own_window: isize -- owner
+CheckEvent.cached: PropertyValues -- cache-of-application-data
+CheckEvent.payload: Payload -- owner
+CheckEvent.placeholder_candidate: bool -- owner
+CheckEvent.switcher_item: bool -- owner
+Kept.generation: u64 -- owner
+Kept.state: Mutex<ListenerKept<Agile<ListenerEvent>>> -- owner
+State.threads: CheckThreads<CheckEvent, IdleWaiter> -- owner
+State.wakes: HashMap<Pid, Arc<Condvar>> -- handle
+State.applications: Applications -- owner
+Checks.state: Mutex<State> -- owner
+Checks.kept: Arc<Kept> -- owner
+Checks.tokens: AtomicU64 -- owner
+Checks.outgoing: Arc<Outgoing> -- owner
+Checks.readers: Arc<Readers<UiaReading>> -- owner
+
+## crates/verbatim-listener/src/listener/tells.rs
+TellKey.kind: EventKind -- owner
+TellKey.object: EventObject -- owner
+TellKey.thread: u32 -- owner
+Pending.trace_id: TraceId -- owner
+Pending.kind: EventKind -- owner
+Pending.process: Pid -- owner
+Pending.application: String -- owner
+Pending.thread: u32 -- owner
+Pending.at_us: u64 -- owner
+Pending.object: EventObject -- owner
+Pending.cached: PropertyValues -- cache-of-application-data
+Pending.payload: Payload -- owner
+Pending.window: PendingWindow -- owner
+Pending.checked: Option<Checked> -- owner
+PendingWindow::Found.0: WindowPart -- owner
+PendingWindow::Whole.0: Box<AcceptanceFacts> -- owner
+Held::Tell.0: Box<Pending> -- owner
+Held::Destroyed.window: WindowHandle -- owner
+Held::Destroyed.process: Option<Pid> -- owner
+Held::Destroyed.at_us: u64 -- owner
+Held::IdleAnswer.0: u64 -- owner
+Held::Hung.0: Hung -- owner
+Tells.pending: Mutex<Foreground<Held>> -- owner
+Tells.sender: Sender<Waiting> -- handle
+Tells.front: fn() -> isize -- owner
+Applications.known: BTreeMap<Pid, Application> -- owner
+Applications.swept_at: usize -- owner
+Application.target: Option<Target> -- owner
+Application.name: String -- owner
+Application.marks: Marks -- owner
+
+## crates/verbatim-listener/src/reading.rs
+State.schedule: Schedule<J, IdleWaiter> -- owner
+State.wakes: HashMap<AppKey, Arc<Condvar>> -- handle
+State.threads: Vec<JoinHandle<()>> -- handle
+Shared.reading: R -- owner
+Shared.clock: Clock -- owner
+Shared.origin: Instant -- owner
+Shared.state: Mutex<State<R::Job>> -- owner
+Shared.failed_reads: AtomicU32 -- owner
+Readers.shared: Arc<Shared<R>> -- owner
+
+## crates/verbatim-outpost-logic/src/charge.rs
+Request.generation: u64 -- owner
+Request.number: u64 -- owner
+InCharge.generation: u64 -- owner
+InCharge.requests: u64 -- request-table
+InCharge.running: Option<(Request, T)> -- owner
+
+## crates/verbatim-outpost-logic/src/entry.rs
+UiaKind::Property.id: i32 -- owner
+UiaKind::Property.text_pattern: bool -- owner
+UiaKind::Property.automation_id: Option<String> -- owner
+UiaKind::Property.window: Box<verbatim_model::tell::TellWindow> -- owner
+UiaEvent.kind: UiaKind -- owner
+UiaEvent.parts: UiaSnapshotFact -- owner
+UiaEvent.hwnd: isize -- owner
+UiaEvent.element: Option<u64> -- owner
+Asker::Round.0: u64 -- owner
+Item::Msaa.kind: WinKind -- owner
+Item::Msaa.hwnd: isize -- owner
+Item::Uia.0: UiaEvent -- owner
+Item::NodesHeld.nodes: Vec<u64> -- owner
+Item::NodesHeld.anchors: Vec<u64> -- owner
+Item::NodesHeld.told: Vec<u64> -- own-outbound-record
+Item::NodesHeld.acknowledged: u64 -- owner
+Item::Barrier.asker: Asker -- owner
+Entry.item: Item -- owner
+Entry.trace: TraceId -- owner
+Entry.observed_at_us: u64 -- owner
+Entry.timing: EventTiming -- owner
+Entry.window: WindowState -- owner
+
+## crates/verbatim-outpost-logic/src/intake.rs
+Key::Console.0: WinKind -- owner
+Key::Console.1: isize -- owner
+Key::Uia.0: u8 -- owner
+Key::Uia.1: i32 -- owner
+Key::Uia.2: Vec<i32> -- owner
+Waiting.key: Option<Key> -- owner
+Waiting.entry: Entry -- owner
+Intake.waiting: VecDeque<Waiting> -- request-table
+Intake.batch: VecDeque<Entry> -- owner
+Intake.closed: bool -- owner
+
+## crates/verbatim-outpost-logic/src/lib.rs
+Current::Ask.0: verbatim_model::request::RequestNumber -- owner
+Current::Watch.0: verbatim_model::request::RequestNumber -- owner
+Reducer.forgets: Vec<verbatim_model::WindowHandle> -- owner
+Reducer.asks: Asks -- owner
+Reducer.watches: Watches -- owner
+Reducer.intake: intake::Intake -- owner
+Reducer.flight: InCharge<Current> -- owner
+Reducer.to_drop: bool -- owner
+Reducer.idle_query: Option<u64> -- owner
+Reducer.releasing: bool -- owner
+Reducer.stopping: bool -- owner
+Reducer.marks: Marks -- owner
+
+## crates/verbatim-outpost-logic/src/waiting.rs
+Asks.queued: VecDeque<Box<Ask>> -- owner
+
+## crates/verbatim-outpost-logic/src/watch.rs
+Then::Again.0: u64 -- owner
+Phase::Waiting.due_us: u64 -- owner
+Phase::Brought.heard_us: u64 -- owner
+Phase::Brought.poll_us: u64 -- owner
+Phase::Checking.last: bool -- owner
+Phase::Checking.poll_us: u64 -- owner
+Phase::Checking.then: Then -- owner
+Phase::Checking.gone: bool -- owner
+Watching.number: RequestNumber -- owner
+Watching.window: WindowHandle -- owner
+Watching.node: NodeId -- owner
+Watching.wait: CaretWait -- owner
+Watching.after: Batch -- owner
+Watching.phase: Phase -- owner
+Watches.table: Vec<Watching> -- request-table
+
+## crates/verbatim-outpost/src/arbitration.rs
+Arbitrator.good_classes: HashSet<String> -- owner
+Arbitrator.bad_classes: HashSet<String> -- owner
+Arbitrator.probe: Probe -- owner
+
+## crates/verbatim-outpost/src/outpost/commit.rs
+Effects.result: Option<OutpostToCore> -- owner
+Effects.text: Vec<TextWrite> -- owner
+
+## crates/verbatim-outpost/src/outpost/followed.rs
+Named.node: NodeId -- owner
+Named.element: AgileReference<IUIAutomationElement> -- handle
+Named.group: Group -- owner
+Named.extra: Option<(NodeId, AgileReference<IUIAutomationElement>)> -- handle
+Named.terminal: Option<bool> -- owner
+
+## crates/verbatim-outpost/src/outpost/lock.rs
+Lock.inner: Mutex<T> -- handle
+
+## crates/verbatim-outpost/src/outpost/mod.rs
+ApplicationNames.0: HashMap<u32, (Target, String)> -- owner
+Context.target_pid: AtomicU32 -- owner
+Context.application_names: Lock<ApplicationNames> -- cache-of-application-data
+Context.outbound: Outbound -- owner
+Context.mailbox: Mailbox -- handle
+Context.epoch: Instant -- owner
+Context.parked: Lock<usize> -- owner
+Context.shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>> -- handle
+Context.store: store::Store -- handle
+Context.arbitrator: Lock<Arbitrator> -- owner
+Context.observation: OnceLock<verbatim_process::clock::ObservationClock> -- handle
+Context.focus_events: OnceLock<Registration> -- handle
+Context.named: Lock<Option<followed::Named>> -- known-copy copies the node Core last named to this outpost in a Follow, which Core's Follows.named owns
+Context.remote_operations: bool -- owner
+Context.classic_windows: Lock<HashMap<isize, u32>> -- cache-of-application-data
+Context.focused_element: FocusedElementReader -- owner
+Context.foreground: Lock<ForegroundReader> -- handle
+Context.focus_window: Lock<FocusWindowReader> -- handle
+Context.window_readability: Lock<WindowReadabilityReader> -- handle
+Context.heard: OnceLock<HeardObserver> -- handle
+Context.request_calls: OnceLock<RequestCallsObserver> -- handle
+Context.failed_reads: AtomicU32 -- owner
+Context.event_thread: OnceLock<Nudger> -- handle
+Context.console_hooked: std::sync::atomic::AtomicBool -- owner
+
+## crates/verbatim-outpost/src/outpost/outbound.rs
+Carried::Node.0: u64 -- owner
+Carried::Anchor.0: u64 -- owner
+Carried::Told.0: u64 -- owner
+Waiting::Message.0: Box<OutpostToCore> -- owner
+Waiting::Message.1: Vec<Carried> -- owner
+Waiting::Flushed.0: std::sync::mpsc::Sender<()> -- handle
+Pending.urgent: VecDeque<Urgent> -- owner
+Pending.ordinary: VecDeque<Waiting> -- owner
+Pending.numbered: Numbered<Carried> -- owner
+Outbound.sender: Sender<Pending> -- handle
+
+## crates/verbatim-outpost/src/outpost/shell.rs
+Posted::Entry.0: Entry -- owner
+Posted::Settle.0: mpsc::Sender<()> -- handle
+Posted::Commit.request: Request -- request-table
+Posted::Commit.effects: Box<Effects> -- owner
+Posted::Finished.panicked: bool -- owner
+Posted::Finished.request: Request -- request-table
+Posted::Returned.0: u64 -- owner
+Posted::Ask.0: Box<verbatim_model::request::Ask> -- owner
+Posted::CancelAsk.0: verbatim_model::request::Cancel -- owner
+Posted::WindowDestroyed.0: verbatim_model::WindowHandle -- owner
+Posted::Answered.request: Request -- request-table
+Posted::Answered.answer: Box<verbatim_model::request::Answer> -- owner
+Mailbox.state: Lock<MailboxState> -- owner
+Mailbox.alarm: Alarm -- handle
+MailboxState.posted: VecDeque<Posted> -- owner
+MailboxState.asleep: bool -- owner
+MailboxState.closed: bool -- owner
+
+## crates/verbatim-outpost/src/outpost/store/mod.rs
+TextWrite::Facts.change: TextChange -- owner
+TextWrite::Facts.ranges: Vec<(RangeKey, UiaPos)> -- owner
+TextWrite::Facts.touched: Vec<u64> -- owner
+TextWrite::Patterns.0: NodeId -- owner
+TextWrite::Patterns.1: Patterns -- owner
+TextWrite::NoTextForgotten.0: NodeId -- owner
+TextWrite::Support.0: NodeId -- owner
+TextWrite::Support.1: TextSupport -- owner
+TextWrite::Forget.0: NodeId -- owner
+State.text: Arc<TextFacts> -- owner
+State.anchor_nodes: HashMap<u64, u64> -- owner
+State.ranges: HashMap<u64, HashMap<RangeKey, UiaPos>> -- owner
+State.patterns: HashMap<u64, Patterns> -- owner
+State.support: HashMap<u64, TextSupport> -- owner
+State.nearest_windows: HashMap<u64, isize> -- owner
+State.routes: HashMap<u64, super::focus_path::Route> -- owner
+State.parked: HashMap<u64, Parked> -- owner
+State.parked_taken: u64 -- owner
+State.told: BTreeSet<u64> -- own-outbound-record
+Parked::Property.0: verbatim_uia::Agile<verbatim_uia::PropertyEvent> -- owner
+Parked::Text.0: verbatim_uia::Agile<verbatim_uia::TextEvent> -- owner
+Store.uia: UiaRegistry -- owner
+Store.msaa: MsaaRegistry -- owner
+Store.anchor_numbers: Arc<AtomicU64> -- owner
+Store.range_keys: AtomicU64 -- owner
+Store.state: Lock<State> -- owner
+
+## crates/verbatim-outpost/src/text/uia.rs
+UiaPos.range: AgileReference<IUIAutomationTextRange> -- handle
+UiaPos.endpoint: Endpoint -- owner
+UiaPos.collapsed: bool -- owner
+TextSupport.unsupported: Attributes -- owner
+TextSupport.supported: Attributes -- owner
+TextSupport.colours_at: Option<(u32, u32)> -- owner
+
+## crates/verbatim-speech/src/host.rs
+Mirror.state: Mutex<Description> -- owner
+Mirror.answered: Mutex<Option<Answered>> -- owner
+Description.synths: Vec<SynthChoice> -- owner
+Description.active: SynthChoice -- owner
+Description.descriptors: Vec<SettingDescriptor> -- owner
+Description.values: Vec<(SettingId, SettingValue)> -- owner
+
+## crates/verbatim-speech/src/manager.rs
+SpeechManager.inbox: Arc<dyn SpeechInbox> -- handle
+SpeechManager.themes: ThemeHandle -- owner
+SpeechManager.events: Arc<Observer> -- handle
+SpeechManager.waiters: Arc<Waiters> -- request-table
+SpeechManager.mirror: Arc<Mirror> -- owner
+SpeechManager.queue_handle: Option<JoinHandle<()>> -- handle
+SpeechManager.synth_handle: Option<JoinHandle<()>> -- handle
+SpeechManager._mixer: Mixer -- owner
+Waiters.0: Mutex<HashMap<UtteranceId, Sender<UtteranceId>>> -- owner
+Observer.inner: Arc<dyn SpeechEvents> -- handle
+Observer.waiters: Arc<Waiters> -- request-table
+
+## crates/verbatim-speech/src/settings.rs
+SynthId.0: String -- owner
+SynthChoice.id: SynthId -- owner
+SynthChoice.display_name: String -- owner
+SettingId.0: String -- owner
+SettingValue::Number.0: i32 -- owner
+SettingValue::Choice.0: String -- owner
+SettingValue::Toggle.0: bool -- owner
+SettingDescriptor::Numeric.id: SettingId -- owner
+SettingDescriptor::Numeric.label_key: String -- owner
+SettingDescriptor::Numeric.min: i32 -- owner
+SettingDescriptor::Numeric.max: i32 -- owner
+SettingDescriptor::Numeric.small_step: i32 -- owner
+SettingDescriptor::Numeric.normal_step: i32 -- owner
+SettingDescriptor::Numeric.large_step: i32 -- owner
+SettingDescriptor::Choice.id: SettingId -- owner
+SettingDescriptor::Choice.label_key: String -- owner
+SettingDescriptor::Choice.options: Vec<(String, String)> -- configuration
+SettingDescriptor::Toggle.id: SettingId -- owner
+SettingDescriptor::Toggle.label_key: String -- owner
+
+## crates/verbatim-speech/src/theme.rs
+ActiveTheme.theme: Theme -- owner
+ActiveTheme.settings: HashMap<Indication, IndicationSetting> -- configuration
+ActiveTheme.sounds: HashMap<SoundSource, Arc<Sound>> -- owner
+ActiveTheme.options: ThemeOptions -- configuration
+ActiveTheme.problems: Vec<ThemeProblem> -- owner
+ThemeHandle.active: Arc<RwLock<Arc<ActiveTheme>>> -- owner
+
+## crates/verbatim-supervisor/src/frames.rs
+Frame.pid: Pid -- owner
+Frame.outpost: OutpostId -- owner
+Frame.bytes: OwnedFrame -- owner
+
+## crates/verbatim-supervisor/src/lib.rs
+EventSink.deliver: Arc<dyn Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync> -- handle
+Sealed.0: () -- owner
+OutpostMessage::Started.outpost: OutpostId -- owner
+OutpostMessage::Started.target_pid: Pid -- owner
+OutpostMessage::Started.sealed: Sealed -- owner
+OutpostMessage::Event.pid: Pid -- owner
+OutpostMessage::Event.outpost: OutpostId -- owner
+OutpostMessage::Event.position: u64 -- owner
+OutpostMessage::Event.message: Box<OutpostToCore> -- owner
+OutpostMessage::SpareReady.spare: OutpostId -- owner
+OutpostMessage::SpareReady.outpost_pid: Pid -- owner
+OutpostMessage::SpareReady.waiting: usize -- request-table
+OutpostMessage::SpareReady.sealed: Sealed -- owner
+OutpostMessage::ListenerReady.listener: OutpostId -- owner
+OutpostMessage::ListenerReady.sealed: Sealed -- owner
+OutpostMessage::ListenerStarted.listener: OutpostId -- owner
+OutpostMessage::ListenerStarted.sealed: Sealed -- owner
+OutpostMessage::ListenerEnded.listener: OutpostId -- owner
+OutpostMessage::ListenerEnded.sealed: Sealed -- owner
+OutpostMessage::Listener.listener: OutpostId -- owner
+OutpostMessage::Listener.message: Box<ListenerToCore> -- owner
+OutpostMessage::Pong.outpost: OutpostId -- owner
+OutpostMessage::Pong.target_pid: Pid -- owner
+OutpostMessage::Pong.abandoned: usize -- owner
+OutpostMessage::Ended.outpost: OutpostId -- owner
+OutpostMessage::Ended.target_pid: Pid -- owner
+OutpostMessage::Ended.reason: EndReason -- owner
+OutpostMessage::Ended.sealed: Sealed -- owner
+OutpostMessage::LaunchFailed.target_pid: Pid -- owner
+OutpostMessage::LaunchFailed.application_gone: bool -- owner
+OutpostMessage::LaunchFailed.sealed: Sealed -- owner
+OutpostMessage::ApplicationExited.target_pid: Pid -- owner
+OutpostMessage::ApplicationExited.sealed: Sealed -- owner
+OutpostMessage::Frame.0: Frame -- owner
+OutpostMessage::IdleQueried.round: u64 -- owner
+OutpostMessage::IdleQueried.outposts: Vec<OutpostId> -- owner
+OutpostMessage::IdleQueried.sealed: Sealed -- owner
+Executables.outpost: PathBuf -- owner
+Executables.listener: PathBuf -- owner
+
+## crates/verbatim-supervisor/src/owner.rs
+OwnerEvent::StartOutpost.0: Pid -- owner
+OwnerEvent::BackoffClock.0: BackoffClock -- owner
+OwnerEvent::Pong.outpost: OutpostId -- owner
+OwnerEvent::Pong.abandoned: usize -- owner
+OwnerEvent::Unreadable.0: OutpostId -- owner
+OwnerEvent::Launched.outpost: OutpostId -- owner
+OwnerEvent::Launched.result: io::Result<Launch> -- owner
+OwnerEvent::Retired.0: Ending -- owner
+OwnerEvent::IdleRound.0: u64 -- owner
+OwnerEvent::ToListener.0: CoreToListener -- owner
+OwnerEvent::ListenerHeld.view: CoreToListener -- owner
+OwnerEvent::ListenerHeld.now: bool -- owner
+OwnerEvent::EndOutpost.0: OutpostId -- owner
+OwnerEvent::Shutdown.0: Sender<ShutdownSummary> -- handle
+Child.process: Launched -- owner
+Child.writer: WriterHandle<M> -- owner
+LaunchedChild::Listener.0: Child<CoreToListener> -- owner
+LaunchedChild::Outpost.0: OutpostChild -- owner
+Launch.child: LaunchedChild -- owner
+Launch.from_child: OwnedHandle -- handle
+Launch.source: Source -- owner
+Run::Running.0: C -- owner
+Generation::Launching.outpost: OutpostId -- owner
+Generation::Launching.spare: bool -- owner
+Generation::Starting.outpost: OutpostId -- owner
+Generation::Starting.child: OutpostChild -- owner
+Generation::Starting.fault: Option<String> -- owner
+Generation::Starting.idle_query: Option<u64> -- owner
+Generation::Ready.outpost: OutpostId -- owner
+Generation::Ready.child: OutpostChild -- owner
+IdleStage::Listener.0: u64 -- owner
+IdleStage::Launches.0: u64 -- owner
+ListenerRecord.outpost: OutpostId -- owner
+ListenerRecord.child: Run<Child<CoreToListener>> -- owner
+ListenerRecord.liveness: Liveness -- owner
+ListenerRecord.pending: Vec<CoreToListener> -- request-table
+ListenerRecord.exits_told: BTreeMap<Pid, Target> -- own-outbound-record
+Outbox.0: EventSink -- owner
+Owner.backoff_clock: BackoffClock -- owner
+Owner.executables: Executables -- owner
+Owner.options: verbatim_process::arguments::OutpostOptions -- configuration
+Owner.outbox: Outbox -- owner
+Owner.writers: Writers -- owner
+Owner.own_tx: Mailbox<OwnerEvent> -- handle
+Owner.relay: Relay -- owner
+Owner.port: Arc<Port> -- handle
+Owner.generation: u64 -- owner
+Owner.records: BTreeMap<Pid, Generation> -- owner
+Owner.listener: Option<ListenerRecord> -- owner
+Owner.apps: BTreeMap<Pid, Target> -- owner
+Owner.own_pid: Pid -- owner
+Owner.shutdown_limit: Duration -- configuration
+Owner.retiring: usize -- owner
+Owner.summary: ShutdownSummary -- owner
+Owner.shutting_down: Option<Sender<ShutdownSummary>> -- handle
+Owner.ignored: std::sync::Arc<IgnoredProcesses> -- owner
+Owner.idle: Option<IdleStage> -- owner
+Owner.spares: Spares -- owner
+Owner.spare_children: BTreeMap<OutpostId, SpareChild> -- owner
+SpareChild.child: Run<OutpostChild> -- owner
+SpareChild.liveness: Liveness -- owner
+SpareChild.fault: Option<String> -- owner
+SpareChild.started_us: u64 -- owner
+
+## crates/verbatim-supervisor/src/process.rs
+Launched.contained: Contained -- owner
+Launched.process_id: Pid -- owner
+
+## crates/verbatim-supervisor/src/relay.rs
+Queue.items: VecDeque<T> -- owner
+Queue.closed: bool -- owner
+Mailbox.queue: Arc<Mutex<Queue<T>>> -- owner
+Mailbox.port: Arc<Port> -- handle
+CommandPipes.port: Arc<Port> -- handle
+CommandPipes.writers: Arc<Mutex<HashMap<usize, Arc<dyn Finishing>>>> -- owner
+Source::Outpost.0: Pid -- owner
+Reader.outpost: OutpostId -- owner
+Reader.source: Source -- owner
+Reader.pipe: PortReader -- handle
+Relay.port: Arc<Port> -- handle
+Relay.commands: CommandPipes -- owner
+Relay.readers: HashMap<usize, Reader> -- owner
+
+## crates/verbatim-supervisor/src/retire.rs
+Ending::Exited.0: Option<u32> -- owner
+ShutdownSummary.clean: usize -- owner
+ShutdownSummary.exited: usize -- owner
+ShutdownSummary.killed: usize -- owner
+ShutdownSummary.killed_on_failure: usize -- owner
+
+## crates/verbatim-supervisor/src/writer.rs
+Outgoing::Unbounded.0: M -- owner
+Outgoing::Other.0: M -- owner
+Queue.items: VecDeque<Outgoing<M>> -- owner
+Queue.held: HeldSlot<M> -- owner
+WriterHandle.sender: Sender<Queue<M>> -- handle
+
+## crates/verbatim-synth-hosted/src/lib.rs
+HostedSynth.exe: PathBuf -- configuration
+HostedSynth.synth: SynthId -- configuration
+HostedSynth.description: HostDescription -- configuration
+HostedSynth.host: Option<Host> -- handle
+HostedSynth.values_changed: bool -- known-copy a flag beside HostedSynth.host: whether the speech manager has been told the new host's values, which the manager's record of the voice's values owns
+Host.commands: EventWriter -- owner
+Host.replies: EventReader -- owner
+Host.read: VecDeque<FromHost> -- owner
+Host.ended: Option<String> -- owner
+Host.draining: VecDeque<UtteranceId> -- owner
+Host.silent_since: Instant -- owner
+Host.contained: Contained -- owner
+
+## crates/verbatim-text/src/lib.rs
+Segmenter._private: () -- owner
+
+## crates/verbatim-text/src/terminal_reading.rs
+Settings.report_new_output: bool -- owner
+Settings.review_follows_caret: bool -- owner
+KeyKind::Typed.0: String -- owner
+KeyKind::Caret.0: Unit -- owner
+KeyTag.trace: u64 -- owner
+KeyTag.number: u64 -- owner
+ColourRun.column: usize -- owner
+ColourRun.length: usize -- owner
+ColourRun.foreground: u32 -- owner
+ColourRun.background: u32 -- owner
+Wait::Word.due_ms: u64 -- owner
+Wait::Colours.0: String -- owner
+Hold::Steady.0: Wait -- owner
+Hold::Settling.due_ms: u64 -- owner
+Hold::Volatile.0: Wait -- owner
+Change.at_ms: u64 -- owner
+Change.read: u64 -- owner
+LineState.text: Text -- owner
+LineState.said: Text -- own-outbound-record
+LineState.hold: Hold -- owner
+LineState.changed: Option<Change> -- owner
+LineState.unprompted_ms: Option<u64> -- owner
+LineState.grew_ms: Option<u64> -- owner
+LineState.input: bool -- owner
+LineState.cut: usize -- owner
+RowState.hash: u64 -- owner
+RowState.text: Text -- owner
+RowState.colours: Option<Vec<ColourRun>> -- owner
+RowState.line: Option<Box<LineState>> -- owner
+Caret.row: usize -- owner
+Caret.line: usize -- owner
+Caret.text: String -- owner
+Caret.column: usize -- owner
+Caret.shown: String -- owner
+Caret.typing: usize -- owner
+Screen.rows: Vec<RowState> -- owner
+Screen.starts: Vec<usize> -- owner
+Screen.caret: Option<Caret> -- owner
+Screen.top: usize -- owner
+Screen.skipped: usize -- owner
+NewestKey.at_ms: u64 -- owner
+NewestKey.interval_ms: Option<u64> -- owner
+NewestKey.tag: KeyTag -- owner
+KeyWindow::Closed.newest: Option<NewestKey> -- owner
+KeyWindow::Open.keys: Keys -- owner
+KeyWindow::Open.newest: NewestKey -- owner
+Keys.first_ms: u64 -- owner
+Keys.kinds: Vec<KeyKind> -- owner
+Keys.origin: Option<Caret> -- owner
+Keys.followed: bool -- owner
+Keys.typed: Vec<(String, u64)> -- owner
+TerminalReader.memory: TerminalMemory -- owner
+TerminalReader.settings: Settings -- known-copy copies the reader settings Core's configuration owns
+TerminalReader.segmenter: Segmenter -- handle
+TerminalReader.screen: Screen -- owner
+TerminalReader.lingering: Vec<(LingerId, Box<LineState>)> -- owner
+TerminalReader.keys: KeyWindow -- owner
+TerminalReader.focused: bool -- known-copy copies whether the terminal holds the focus, which Core's committed focus owns
+TerminalReader.fresh: bool -- owner
+TerminalReader.reads: u64 -- owner
+TerminalReader.suggestion: Option<String> -- owner
+
+## crates/verbatim-text/src/terminal_rows.rs
+Text.whole: Arc<str> -- owner
+Text.start: usize -- owner
+Text.end: usize -- owner
+Row.text: Text -- owner
+Row.hash: u64 -- owner
+Row.wraps: bool -- owner
+Row.line_hash: u64 -- owner
+Row.redrawn: bool -- owner
+Anchor.row: isize -- owner
+Anchor.column: usize -- owner
+Anchor.line_hash: u64 -- owner
+LingerId.0: u64 -- owner
+Lingering.id: LingerId -- owner
+Lingering.row: Row -- owner
+Lingering.since_ms: u64 -- owner
+Lingering.at: isize -- owner
+ReadCaret.row: usize -- owner
+ReadCaret.column: usize -- owner
+ReadCaret.line_column: usize -- owner
+Screen.rows: Vec<Row> -- owner
+Screen.skipped: usize -- owner
+Screen.width: usize -- owner
+Screen.height: usize -- owner
+Screen.next: usize -- owner
+Screen.at_document_start: bool -- owner
+Screen.caret: Option<ReadCaret> -- owner
+Screen.shows_text: bool -- owner
+Screen.lingering: Vec<Lingering> -- owner
+Screen.review: Option<Anchor> -- known-copy copies the review position Core's review cursor owns (verbatim-core's SrState)
+Screen.marks: Vec<Anchor> -- owner
+Screen.newest_mark: Option<Anchor> -- owner
+Screen.places: Vec<(u64, Anchor)> -- owner
+Screen.continued: bool -- owner
+Aside.rows: BTreeMap<u64, usize> -- owner
+Aside.marks: Vec<Anchor> -- owner
+Aside.total: usize -- owner
+TerminalMemory.screen: Option<Screen> -- owner
+TerminalMemory.aside: Option<Aside> -- owner
+TerminalMemory.next_linger: u64 -- owner
+TerminalMemory.next_place: u64 -- owner

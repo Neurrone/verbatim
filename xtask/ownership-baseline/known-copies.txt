@@ -1,0 +1,25 @@
+# The fields of long-lived state that copy a fact another record owns, the
+# debt CLAUDE.md's "Design principles" ask to remove: each is a
+# `known-copy` line in xtask/ownership-baseline/state-ledger.txt, whose
+# reason names the owner. This list only shrinks: `cargo xtask ci` fails
+# on a known copy it does not list and on an entry here that is no longer
+# a known copy. Never add an entry; read the fact from its owner instead.
+crates/verbatim-audio/src/notices.rs Inner.property_changed
+crates/verbatim-audio/src/silent.rs SilentDevice.refused
+crates/verbatim-core/src/event_queue/driver.rs Queue.readers
+crates/verbatim-core/src/focus/follow.rs Follows.named
+crates/verbatim-core/src/focus/versions.rs Kept.foreground
+crates/verbatim-core/src/state.rs FocusContext.source
+crates/verbatim-core/src/state.rs FocusContext.window
+crates/verbatim-core/src/state.rs SrState.run_executed
+crates/verbatim-core/src/terminal_model.rs TerminalModel.mark_lines
+crates/verbatim-core/src/terminal_model.rs TerminalModel.pending_mark
+crates/verbatim-core/src/terminal_model.rs TerminalModel.places
+crates/verbatim-gui/src/lifecycle.rs Lifecycle.menu_open
+crates/verbatim-gui/src/lifecycle.rs Lifecycle.settings_open
+crates/verbatim-gui/src/lifecycle.rs Lifecycle.shutting_down
+crates/verbatim-outpost/src/outpost/mod.rs Context.named
+crates/verbatim-synth-hosted/src/lib.rs HostedSynth.values_changed
+crates/verbatim-text/src/terminal_reading.rs TerminalReader.focused
+crates/verbatim-text/src/terminal_reading.rs TerminalReader.settings
+crates/verbatim-text/src/terminal_rows.rs Screen.review

@@ -1,0 +1,84 @@
+# The declarations of shared state each product file may keep, as `path
+# count`, which `cargo xtask ci` checks (xtask/src/shared_state.rs): fields
+# and statics whose type names an atomic, `Cell`, `RefCell`, `Mutex`,
+# `RwLock`, `OnceLock`, `OnceCell`, `LazyLock` or the outpost's `Lock`. A
+# count may only fall, and is lowered when it does. A genuinely new handle
+# raises its file's count in the same commit as the code, with a `# reason`
+# line above the entry saying why the hand-off cannot be removed.
+# `cargo xtask ownership --update-baseline` rewrites the counts, keeping
+# each entry's `#` lines.
+
+crates/verbatim-app/src/error_sound.rs 1
+crates/verbatim-app/src/harness.rs 3
+crates/verbatim-app/src/key_reports.rs 1
+crates/verbatim-app/src/latency.rs 3
+crates/verbatim-app/src/main.rs 5
+crates/verbatim-app/src/requests.rs 1
+crates/verbatim-app/src/screen_reader_flag.rs 1
+crates/verbatim-app/src/session_lock.rs 1
+crates/verbatim-app/src/terminal_settings.rs 1
+crates/verbatim-app/src/themes.rs 2
+crates/verbatim-audio-wasapi/src/lib.rs 1
+crates/verbatim-audio/src/lib.rs 1
+crates/verbatim-audio/src/mixer/mod.rs 7
+crates/verbatim-audio/src/mixer/room_waits.rs 1
+crates/verbatim-audio/src/notices.rs 4
+crates/verbatim-audio/src/silent.rs 1
+crates/verbatim-audio/src/sound.rs 1
+crates/verbatim-audio/src/wav.rs 1
+crates/verbatim-control/src/server.rs 2
+crates/verbatim-core/src/batch.rs 2
+crates/verbatim-core/src/event_queue/driver.rs 3
+crates/verbatim-gui/src/lib.rs 8
+crates/verbatim-i18n/src/lib.rs 1
+crates/verbatim-ia2/src/dialog.rs 4
+crates/verbatim-ia2/src/equality.rs 1
+crates/verbatim-ia2/src/event_thread.rs 3
+crates/verbatim-ia2/src/hook.rs 5
+crates/verbatim-ia2/src/registry.rs 2
+crates/verbatim-input-windows/src/hook.rs 1
+crates/verbatim-listener/src/call_log.rs 1
+crates/verbatim-listener/src/listener.rs 3
+crates/verbatim-listener/src/listener/checking.rs 3
+crates/verbatim-listener/src/listener/tells.rs 1
+crates/verbatim-listener/src/reading.rs 2
+crates/verbatim-model/src/lib.rs 1
+crates/verbatim-outpost/src/arbitration.rs 1
+crates/verbatim-outpost/src/outpost/lock.rs 1
+crates/verbatim-outpost/src/outpost/mod.rs 20
+crates/verbatim-outpost/src/outpost/msaa_object.rs 1
+crates/verbatim-outpost/src/outpost/shell.rs 1
+crates/verbatim-outpost/src/outpost/store/mod.rs 4
+crates/verbatim-outpost/src/outpost/uia_focus.rs 2
+crates/verbatim-outpost/src/outpost/uia_object.rs 3
+crates/verbatim-outpost/src/outpost/worker.rs 1
+crates/verbatim-outpost/src/text/uia.rs 1
+crates/verbatim-process/src/clock.rs 1
+crates/verbatim-process/src/overlapped.rs 1
+crates/verbatim-process/src/port_queue.rs 3
+crates/verbatim-process/src/transport.rs 1
+crates/verbatim-reader-rules/src/text/mod.rs 3
+crates/verbatim-speech/src/driver.rs 1
+crates/verbatim-speech/src/host.rs 2
+crates/verbatim-speech/src/manager.rs 4
+crates/verbatim-speech/src/theme.rs 2
+crates/verbatim-supervisor/src/relay.rs 3
+crates/verbatim-synth-espeak/src/lib.rs 1
+crates/verbatim-synth-host/src/lib.rs 3
+crates/verbatim-text/src/lib.rs 1
+crates/verbatim-uia-rops/src/batch/program.rs 2
+crates/verbatim-uia-rops/src/operation.rs 5
+crates/verbatim-uia/src/calls.rs 1
+crates/verbatim-uia/src/checks.rs 1
+crates/verbatim-uia/src/client.rs 2
+crates/verbatim-uia/src/com.rs 1
+crates/verbatim-uia/src/nearest.rs 1
+crates/verbatim-uia/src/registry.rs 2
+crates/verbatim-uia/src/shape/mod.rs 1
+crates/verbatim-uia/src/shape/shapes.rs 2
+crates/verbatim-uia/src/subscribe.rs 8
+crates/verbatim-win32/src/calls.rs 2
+crates/verbatim-win32/src/held_locks.rs 1
+crates/verbatim-win32/src/integrity.rs 1
+crates/verbatim-win32/src/window.rs 3
+crates/verbatim-win32/src/window_facts.rs 2
