@@ -17,6 +17,10 @@ The design of Verbatim's rewrite (`docs/roadmap.md`, "The rewrite") and the work
 - The NVDA inventory, every part of NVDA's source classed by what replaying it needs: [the core loop and input](nvda-inventory/core.md), [object classes and app modules](nvda-inventory/objects.md), [the accessibility handlers](nvda-inventory/handlers.md), [speech, braille and audio](nvda-inventory/speech.md), and [text, documents and terminals](nvda-inventory/text.md).
 - The oracle experiments are in [experiments/nvda-oracle](../../../experiments/nvda-oracle/readme.md).
 
+## The pre-mortem
+
+- [premortem.md](premortem.md): the bug classes the design's own mechanisms invite, with their evidence and mitigations; [review-premortem-fable.md](review-premortem-fable.md), its adversarial review, fixed once in it.
+
 ## Reviews
 
 - [review-fable.md](review-fable.md) and [review-fable-2.md](review-fable-2.md): the two adversarial reviews of the rewrite's design, each fixed once in it.

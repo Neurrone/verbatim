@@ -91,7 +91,9 @@ captures and troubleshooting.
     [speech](design/rewrite/nvda-inventory/speech.md) and
     [text](design/rewrite/nvda-inventory/text.md), and the reviews
     [one](design/rewrite/review-fable.md), [two](design/rewrite/review-fable-2.md)
-    and [extensions](design/rewrite/review-extensions-fable.md).
+    and [extensions](design/rewrite/review-extensions-fable.md); and
+    [the pre-mortem](design/rewrite/premortem.md) with
+    [its review](design/rewrite/review-premortem-fable.md).
   - [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
     — the approved design of the terminals build of "Readers tell, Core
     asks" (ADR 0003), which is built; the terminal code's comments cite
