@@ -522,7 +522,6 @@ TerminalFocus.entry_read: bool -- owner
 SpeechEntry.node: NodeId -- owner
 SpeechEntry.generation: u64 -- owner
 SpeechEntry.items: Vec<TerminalItem> -- owner
-SpeechEntry.followed: bool -- owner
 SpeechEntry.started_ms: u64 -- owner
 SpeechEntry.silent: bool -- owner
 SpeechEntry.of: Of -- owner
@@ -555,6 +554,7 @@ TerminalModel.given: Given -- owner
 TerminalModel.mark_lines: VecDeque<MarkLine> -- known-copy copies the command marks the terminal memory owns (Screen.marks and Aside.marks in verbatim-text's terminal_rows.rs)
 TerminalModel.pending_mark: Option<(Anchor, u64)> -- known-copy a stage of the newest mark the terminal memory owns (Screen.newest_mark in verbatim-text's terminal_rows.rs), kept beside it
 TerminalModel.places: VecDeque<(u64, u64)> -- known-copy copies the places the terminal memory owns (Screen.places in verbatim-text's terminal_rows.rs)
+TerminalModel.follows: u64 -- owner
 Given::Last.0: u64 -- owner
 Terminals.models: Vec<TerminalModel> -- owner
 Terminals.next_generation: u64 -- owner
@@ -1207,7 +1207,6 @@ KeyWindow::Open.newest: NewestKey -- owner
 Keys.first_ms: u64 -- owner
 Keys.kinds: Vec<KeyKind> -- owner
 Keys.origin: Option<Caret> -- owner
-Keys.followed: bool -- owner
 Keys.typed: Vec<(String, u64)> -- owner
 TerminalReader.memory: TerminalMemory -- owner
 TerminalReader.settings: Settings -- known-copy copies the reader settings Core's configuration owns
@@ -1249,7 +1248,6 @@ Screen.at_document_start: bool -- owner
 Screen.caret: Option<ReadCaret> -- owner
 Screen.shows_text: bool -- owner
 Screen.lingering: Vec<Lingering> -- owner
-Screen.review: Option<Anchor> -- known-copy copies the review position Core's review cursor owns (verbatim-core's SrState)
 Screen.marks: Vec<Anchor> -- owner
 Screen.newest_mark: Option<Anchor> -- owner
 Screen.places: Vec<(u64, Anchor)> -- owner

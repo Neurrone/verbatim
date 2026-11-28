@@ -543,8 +543,6 @@ pub(crate) struct SpeechEntry {
     generation: u64,
     /// What the rules said, in order.
     items: Vec<TerminalItem>,
-    /// Whether the review cursor followed the caret.
-    followed: bool,
     /// When the read began, in milliseconds on the shared clock.
     started_ms: u64,
     /// Whether it speaks only its answers to keys.
@@ -593,7 +591,6 @@ fn speech_entry(
                 SaidItem::Line(text) => TerminalItem::Output(text.to_string()),
             })
             .collect(),
-        followed: speech.followed,
         started_ms,
         silent: mark == Mark::Silent,
         of,
@@ -623,7 +620,6 @@ pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry, now: Now) -> Vec<Ef
     }
     let said = Said {
         items: entry.items.into_iter().map(SaidItem::Item).collect(),
-        followed: entry.followed,
     };
     let mut effects = crate::terminal::read_spoken(
         state,
@@ -631,7 +627,7 @@ pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry, now: Now) -> Vec<Ef
             entry.key.trace.unwrap_or(entry.trace),
             stamp_of(entry.fence, entry.key).key(),
         ),
-        (entry.node, entry.started_ms),
+        entry.started_ms,
         (said, entry.silent),
         now,
     );
@@ -728,12 +724,15 @@ fn decoded(
 /// the `Follow`, the baseline or the output read it is (Tables 1 and 2);
 /// one the focused terminal no longer awaits is dropped. The speech
 /// entries returned join the back; what the flood policy says goes into
-/// `said`.
+/// `said`. `pressing` while the queue's front is a review press, which none
+/// of these reads answers, its own being entry reads: a read that follows
+/// the caret then leaves the review cursor to that press
+/// ([`terminal_model::take`]).
 pub(crate) fn answered(
     state: &mut SrState,
     token: u64,
     outcome: Outcome<(Reply, Ran)>,
-    (now, trace): (Now, TraceId),
+    (now, trace, pressing): (Now, TraceId, bool),
     said: &mut Vec<Effect>,
 ) -> Vec<Entry> {
     let focused = state.terminal_focus.focused;
@@ -774,7 +773,7 @@ pub(crate) fn answered(
             (&terminal, &ask.read),
             (follow, told),
             outcome,
-            (now, trace),
+            (now, trace, pressing),
         ),
         FocusedTerminal::Modelled {
             reading: Reading::Out { mark, again, .. },
@@ -784,7 +783,7 @@ pub(crate) fn answered(
             (&terminal, follow),
             (token, mark, &ask.read, again),
             outcome,
-            (now, trace),
+            (now, trace, pressing),
             said,
         ),
         _ => Vec::new(),
@@ -880,7 +879,7 @@ fn baseline_ended(
     (terminal, asked): (&Terminal, &WindowRead),
     (follow, told): (Option<FollowOut>, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
-    (now, trace): (Now, TraceId),
+    (now, trace, pressing): (Now, TraceId, bool),
 ) -> Vec<Entry> {
     let reply = match outcome {
         Outcome::Result(reply) => reply,
@@ -912,7 +911,7 @@ fn baseline_ended(
         terminal,
         (follow, told),
         (asked, &reply),
-        (now, trace),
+        (now, trace, pressing),
     )
     .into_iter()
     .map(|entry| Entry::TerminalSpeech(Box::new(entry)))
@@ -928,9 +927,9 @@ fn modelled_by(
     terminal: &Terminal,
     (follow, told): (Option<FollowOut>, Option<u64>),
     (asked, reply): (&WindowRead, &WindowReply),
-    (now, trace): (Now, TraceId),
+    (now, trace, pressing): (Now, TraceId, bool),
 ) -> Option<SpeechEntry> {
-    let taken = terminal_model::take(state, terminal.node, (asked, reply), false);
+    let taken = terminal_model::take(state, terminal.node, (asked, reply), (false, pressing));
     let entry = speech_entry(
         terminal.node,
         taken,
@@ -955,7 +954,7 @@ fn output_ended(
     (terminal, follow): (&Terminal, Option<FollowOut>),
     (read, mark, asked, again): (u64, Mark, &WindowRead, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
-    (now, trace): (Now, TraceId),
+    (now, trace, pressing): (Now, TraceId, bool),
     said: &mut Vec<Effect>,
 ) -> Vec<Entry> {
     let release = mark == (Mark::Waited { release: true });
@@ -1009,7 +1008,7 @@ fn output_ended(
         return Vec::new();
     };
     let waited = matches!(mark, Mark::Waited { .. });
-    let taken = terminal_model::take(state, terminal.node, (asked, &reply), waited);
+    let taken = terminal_model::take(state, terminal.node, (asked, &reply), (waited, pressing));
     output_taken(
         state,
         (terminal, follow),
@@ -1363,12 +1362,12 @@ pub(crate) fn entry_read_ended(
             &terminal,
             (follow, told),
             (read, reply),
-            (now, trace),
+            (now, trace, false),
         ),
         FocusedTerminal::Baselining { terminal, .. } if terminal.node == node => {
             // The baseline answers first, in the worker's order; a read
             // answered before it is taken all the same.
-            let taken = terminal_model::take(state, node, (read, reply), false);
+            let taken = terminal_model::take(state, node, (read, reply), (false, false));
             speech_entry(
                 node,
                 taken,
@@ -1386,7 +1385,7 @@ pub(crate) fn entry_read_ended(
                 &terminal,
                 (follow, told),
                 (read, reply),
-                (now, trace),
+                (now, trace, false),
             )
         }
         FocusedTerminal::Modelled {
@@ -1394,7 +1393,7 @@ pub(crate) fn entry_read_ended(
             follow,
             reading,
         } if terminal.node == node => {
-            let taken = terminal_model::take(state, node, (read, reply), false);
+            let taken = terminal_model::take(state, node, (read, reply), (false, false));
             let entry = speech_entry(
                 node,
                 taken,

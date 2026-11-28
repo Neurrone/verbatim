@@ -594,6 +594,17 @@ impl Session {
         session
     }
 
+    /// [`Session::with`], with `settings` in force from before the focus.
+    pub fn with_settings(outpost: Outpost, settings: verbatim_model::ReaderSettings) -> Self {
+        let mut session = Self::unstarted(outpost, 0, false);
+        session.input(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::Settings(settings),
+        });
+        session.start();
+        session
+    }
+
     /// [`Session::with`], the outpost holding back Core's output reads from
     /// the start ([`Session::hold_output`]), the first read's history block
     /// among them.

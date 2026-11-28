@@ -57,7 +57,7 @@ use verbatim_text::terminal_rows::Text;
 
 use crate::editing;
 use crate::now::Now;
-use crate::state::{ReviewText, SrState};
+use crate::state::SrState;
 use crate::text;
 
 pub(crate) mod commands;
@@ -228,10 +228,6 @@ fn within_bound(mut line: String) -> (String, bool) {
 pub(crate) struct Said {
     /// What to say, in the order it is spoken.
     pub(crate) items: Vec<SaidItem>,
-    /// Whether the review cursor followed the caret: a key moved the caret
-    /// within its window with "review follows caret" on, so the next review
-    /// command reads at the caret.
-    pub(crate) followed: bool,
 }
 
 /// One thing a terminal said.
@@ -316,23 +312,17 @@ pub(crate) fn speech(
     // Held from reads before speech was last cut off: the output pending
     // then is dropped, as NVDA drops it.
     let before_cut = due_ms < state.terminal.cut_at_ms;
-    take(
-        state,
-        (trace_id, None),
-        Some(node),
-        (speech, before_cut),
-        now,
-    )
+    take(state, (trace_id, None), (speech, before_cut), now)
 }
 
-/// Takes in what a full read of the focused terminal `node`, begun at
+/// Takes in what a full read of the focused terminal, begun at
 /// `started_ms`, said at its speech entry's turn, under its trace and its
 /// fence's key number: the answers to keys spoken, and the output, unless
 /// `silent` or read before the last cut, queued by the flood policy.
 pub(crate) fn read_spoken(
     state: &mut SrState,
     under: (TraceId, Option<KeySeq>),
-    (node, started_ms): (NodeId, u64),
+    started_ms: u64,
     (speech, silent): (Said, bool),
     now: Now,
 ) -> Vec<Effect> {
@@ -343,7 +333,7 @@ pub(crate) fn read_spoken(
     let before_held =
         state.strokes.holds() || started_ms.saturating_mul(1_000) < state.strokes.held_reached_us();
     let before_cut = silent || before_held || started_ms < state.terminal.cut_at_ms;
-    take(state, under, Some(node), (speech, before_cut), now)
+    take(state, under, (speech, before_cut), now)
 }
 
 /// A release read's speech was taken, or the release ended with none, at
@@ -391,14 +381,13 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
     })
 }
 
-/// Takes in what the focused terminal, `node`, said, under a trace and a
-/// key number, at `now`: speaks the answers to keys, then, unless the
+/// Takes in what the focused terminal said, under a trace and a key
+/// number, at `now`: speaks the answers to keys, then, unless the
 /// output is `before_cut` (read before a cut), queues it by the flood
 /// policy and hands the oldest to speech.
 fn take(
     state: &mut SrState,
     (trace_id, key): (TraceId, Option<KeySeq>),
-    node: Option<NodeId>,
     (speech, before_cut): (Said, bool),
     now: Now,
 ) -> Vec<Effect> {
@@ -418,13 +407,6 @@ fn take(
                 }
             }
         }
-    }
-    if speech.followed
-        && let Some(text) = node.and_then(|node| state.navigator_text_on(node))
-    {
-        // The review cursor followed the caret: the next review command
-        // reads at the caret as the outpost finds it.
-        *text = ReviewText::Caret;
     }
     let output = speech.items.iter().any(SaidItem::is_output);
     if !state.settings.report_terminal_output || before_cut || !output {

@@ -94,6 +94,30 @@ pub(crate) fn answer(
     })
 }
 
+/// The caret's line in `model`'s memory as a review command reading it
+/// there answers it, its anchor minted from `next_anchor` and its place
+/// kept beside those of the anchors in `held`: where the review cursor
+/// goes when it follows the caret (rule 24, "The review anchor").
+/// `None` when the memory's last read showed no caret.
+pub(crate) fn at_caret(
+    model: &mut TerminalModel,
+    next_anchor: &mut u64,
+    held: &BTreeSet<TextAnchor>,
+) -> Option<TextChunk> {
+    let step = LocalStep::Read {
+        at: TextPoint::Caret,
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+    };
+    match answer_step(model, (step, None), next_anchor, held) {
+        Ok(StepOutcome::Done(Done::ReadText(Chunks { mut chunks, .. }))) if chunks.len() == 1 => {
+            chunks.pop()
+        }
+        _ => None,
+    }
+}
+
 /// One step of [`answer`].
 fn answer_step(
     model: &mut TerminalModel,
@@ -233,15 +257,7 @@ fn finish(
     };
     match plan {
         Plan::Read(moved, chunked) => {
-            let review = Anchor {
-                row: chunked.row,
-                column: verbatim_text::proven::text_in(&chunked.line.text, ..chunked.offset)
-                    .chars()
-                    .count(),
-                line_hash: chunked.line.line_hash,
-            };
             let chunk = chunk_of(model, chunked);
-            model.rules().memory_mut().set_review_anchor(review);
             StepOutcome::Done(Done::ReadText(Chunks {
                 padded: None,
                 moved,

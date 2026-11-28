@@ -1725,10 +1725,25 @@ console's caret event is its caret.
   horizontal keys a character, with Control a word, the vertical and page
   keys a line, Delete as Delete, any other `Other`; text typed, `Enter`,
   `Forget` for Tab, `Other` for a control character.
-- The review cursor follows the caret only when the rules say a key moved
-  it within its window (`Said::followed`), since a program moves its
-  cursor as it draws (`books/dev/src/explanation/design/terminal-model.md`, "The review
-  cursor").
+- The review cursor is a place Core keeps (`ReviewText::At`). With "caret
+  moves review cursor" on, a read whose caret moved (the rules'
+  `Step::followed`) puts it on a place minted at that read's caret, in
+  `terminal_model::take` (`review_to_caret`, through
+  `terminal_model::review::at_caret`, the path a review command's line
+  read takes), unless a say-all of the terminal from the review cursor is
+  running (`SrState::say_all`); with the setting off, output never moves
+  it, and after the focus the first review command starts from the caret
+  (`books/dev/src/explanation/design/terminal-model.md`, "The review
+  cursor"). The model counts its reads that followed
+  (`TerminalModel::follows`). A read answered while the event queue's
+  front is a review press (`PressEntry::reviews`, judged in the facts'
+  `facts_answered` hook, which the queue hands its front), other than that
+  press's own entry reads, is counted but leaves the review cursor where
+  the press lands. The press saves the count before its fresh read, moves
+  the cursor to the caret after that read if a follow came meanwhile, and
+  does so again after it has landed (`review_text::fresh_then_follow`,
+  `terminal_model::followed_since`), as NVDA's caret event lands after
+  the script that was running.
 - Output is spoken queued, one line per utterance, each opening and
   closing with an index mark; a blank line counts and waits but is never
   spoken. Two utterances are handed to speech ahead of playback and the

@@ -156,7 +156,7 @@ fn answer(
         state,
         token,
         outcome,
-        (at(now_us), TraceId::from_raw(1)),
+        (at(now_us), TraceId::from_raw(1), false),
         &mut said,
     )
 }

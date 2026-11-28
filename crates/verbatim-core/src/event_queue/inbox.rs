@@ -461,11 +461,12 @@ impl<L: Logic> Core<L> {
                 let now = shared.now();
                 let mut said = Vec::new();
                 let state = &mut shared.state;
+                let front = state.queue.front.as_ref().map(|front| &front.entry);
                 let joining = L::facts_answered(
                     &mut state.facts,
                     token,
                     outcome,
-                    (now, foreground),
+                    (now, foreground, front),
                     &mut said,
                 );
                 for entry in joining {

@@ -134,6 +134,16 @@ impl PressEntry {
             fence: Fence::default(),
         }
     }
+
+    /// Whether it is a review press that moves the review cursor over
+    /// text: a review command or a move between command marks.
+    pub(crate) fn reviews(&self) -> bool {
+        matches!(
+            self.press.action,
+            PressAction::Command { command, .. }
+                if matches!(Own::of(command), Some(Own::ReviewText | Own::CommandMark))
+        )
+    }
 }
 
 /// Stamps every utterance of `said` with `fence`, inside a key's carried

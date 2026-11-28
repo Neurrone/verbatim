@@ -22,4 +22,3 @@ crates/verbatim-outpost/src/outpost/mod.rs Context.named
 crates/verbatim-synth-hosted/src/lib.rs HostedSynth.values_changed
 crates/verbatim-text/src/terminal_reading.rs TerminalReader.focused
 crates/verbatim-text/src/terminal_reading.rs TerminalReader.settings
-crates/verbatim-text/src/terminal_rows.rs Screen.review

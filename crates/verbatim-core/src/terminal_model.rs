@@ -58,7 +58,7 @@ use verbatim_text::terminal_reading::{
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadStart, ReadText};
 
 use crate::now::Now;
-use crate::state::SrState;
+use crate::state::{ReviewText, SrState};
 use crate::terminal::reader::{WindowRead, WindowReply};
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
@@ -160,6 +160,10 @@ pub(crate) struct TerminalModel {
     /// The places the review answers minted, each a text anchor's number
     /// and the memory's place for it, oldest first.
     pub(crate) places: VecDeque<(u64, u64)>,
+    /// How many of the model's reads moved the review cursor to the caret
+    /// (the rules' `Step::followed`), by which a review press tells that
+    /// one did while it ran ([`followed_since`]).
+    pub(crate) follows: u64,
 }
 
 /// The read given to the rules before, by which a read identical to it is
@@ -237,6 +241,7 @@ impl TerminalModel {
             mark_lines: VecDeque::new(),
             pending_mark: None,
             places: VecDeque::new(),
+            follows: 0,
         }
     }
 
@@ -732,10 +737,7 @@ fn speech_of(step: Step) -> Said {
             })
         })
         .collect();
-    Said {
-        items,
-        followed: step.followed,
-    }
+    Said { items }
 }
 
 /// A hash of every field of `snapshot` but when it began and ended, its
@@ -823,12 +825,14 @@ pub(crate) struct Taken {
 /// program by its end and the read, keeps the scope they ask for, the
 /// start, the caret and the shape it found, and takes the read's caret as
 /// Core's. A read identical to the last given is not given, unless it
-/// waited or is the first after the focus arrived.
+/// waited or is the first after the focus arrived. A read that follows the
+/// caret moves the review cursor, unless it came while a review press
+/// runs and is not that press's own (`pressing`) ([`follow`]).
 pub(crate) fn take(
     state: &mut SrState,
     node: NodeId,
     (asked, reply): (&WindowRead, &WindowReply),
-    waited: bool,
+    (waited, pressing): (bool, bool),
 ) -> Taken {
     let snapshot = &reply.snapshot;
     let at_ms = read_at(snapshot);
@@ -898,10 +902,74 @@ pub(crate) fn take(
     if let Some(caret) = &snapshot.caret {
         crate::editing::take_caret(state, node, caret.clone());
     }
+    if step.followed {
+        follow(state, node, pressing);
+    }
     Taken {
         speech: Some(speech_of(step)),
         key,
         generation,
+    }
+}
+
+/// The review cursor follows the caret of terminal `node`'s last read: it
+/// is counted, and the cursor moved at once, unless the read came while a
+/// review press runs (`pressing`), whose own reads are not among them;
+/// that press moves it once it has landed ([`followed_since`]), as NVDA's
+/// caret event lands after the script that was running when it came
+/// (rule 24, "The review anchor").
+fn follow(state: &mut SrState, node: NodeId, pressing: bool) {
+    let Some(model) = model_mut(state, node) else {
+        return;
+    };
+    model.follows = model.follows.saturating_add(1);
+    if !pressing {
+        review_to_caret(state, node);
+    }
+}
+
+/// How many of terminal `node`'s reads have followed the caret, for a
+/// review press to compare with [`followed_since`].
+pub(crate) fn follows(state: &SrState, node: NodeId) -> Option<u64> {
+    model_of(state, node).map(|model| model.follows)
+}
+
+/// A review press of terminal `node` that saw `seen` follows: when a read
+/// followed the caret since, the review cursor goes to the caret now.
+pub(crate) fn followed_since(state: &mut SrState, node: NodeId, seen: u64) {
+    if follows(state, node).is_some_and(|now| now != seen) {
+        review_to_caret(state, node);
+    }
+}
+
+/// Moves the review cursor, while the navigator is on terminal `node`, to a
+/// place at the caret of the memory's last read, minted as a review
+/// command's answer is. Not while a say-all of the terminal from the review
+/// cursor moves it, nor for flat text, nor when the read showed no caret.
+fn review_to_caret(state: &mut SrState, node: NodeId) {
+    let saying_all = state
+        .say_all
+        .as_ref()
+        .is_some_and(|say_all| say_all.node == node && !say_all.moves_caret);
+    if saying_all
+        || !matches!(
+            state.navigator_text_on(node),
+            Some(ReviewText::Unknown | ReviewText::At(_) | ReviewText::Point(_))
+        )
+    {
+        return;
+    }
+    let held = crate::terminal::commands::held_anchors(state, node);
+    let mut mint = state.next_terminal_anchor;
+    let Some(model) = model_mut(state, node) else {
+        return;
+    };
+    let line = review::at_caret(model, &mut mint, &held);
+    state.next_terminal_anchor = mint;
+    if let Some(line) = line
+        && let Some(text) = state.navigator_text_on(node)
+    {
+        *text = ReviewText::At(crate::review_text::position_on(line));
     }
 }
 

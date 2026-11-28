@@ -308,11 +308,13 @@ pub struct Step {
     pub history_block: bool,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
-    /// Whether the read moved the review position to the caret because a
-    /// key moved the caret within its window with "review follows caret"
-    /// on ("The review anchor and following"). The first read after the focus arrived moves it
-    /// there too, which the caller's focus does as well, so it is not
-    /// told.
+    /// Whether the review position follows the caret to where this read
+    /// found it: with "review follows caret" on, the focused terminal's
+    /// caret is not on the row and column the last read left it, or the
+    /// alignment could not carry that caret, unless a resize left it at
+    /// the same column along its line, as NVDA moves its review position
+    /// at each caret event of the focus (rule 24, "The review anchor").
+    /// Core keeps the review position and places it.
     pub followed: bool,
 }
 
@@ -693,9 +695,6 @@ struct Keys {
     /// its line unchanged, is where the keys left it, whatever the program
     /// did with its cursor as it drew in between ("Keys and their window").
     origin: Option<Caret>,
-    /// Whether a read in their window moved the review position to the
-    /// caret.
-    followed: bool,
     /// Typing not yet shown, with when each reached the program.
     typed: Vec<(String, u64)>,
 }
@@ -786,9 +785,6 @@ struct CaretAnswer {
     /// From a read without colours, the text after the caret that was not
     /// typed, which waits for a read with them ("Colours").
     held: Option<String>,
-    /// Whether the caret is back where the keys started, on its line
-    /// unchanged: the keys moved nothing.
-    back: bool,
 }
 
 /// The reading rules for one terminal ("Reading rules").
@@ -922,7 +918,6 @@ impl TerminalReader {
                 first_ms: key.at_ms,
                 kinds: Vec::new(),
                 origin: self.screen.caret.clone(),
-                followed: false,
                 typed: Vec::new(),
             },
         };
@@ -1313,8 +1308,6 @@ impl TerminalReader {
         // colours.
         let mut colours_held: Option<String> = None;
         let mut key_speech: Vec<Speech> = Vec::new();
-        // Where the review position goes, set once the read is handled.
-        let mut reviews: Vec<(usize, usize)> = Vec::new();
         if window && !silent {
             let answer = self.caret_step(
                 (caret.as_mut(), before.as_ref(), movement),
@@ -1322,30 +1315,32 @@ impl TerminalReader {
                 &mut key_speech,
             );
             (answered, colours_held) = (answer.line, answer.held);
-            if let Some(caret) = &caret {
-                if answer.back {
-                    // A review position that followed the program's cursor
-                    // while it drew comes back with the caret.
-                    if self.keys.open().is_some_and(|keys| keys.followed) {
-                        step.followed = true;
-                        reviews.push((caret.row, read.caret_column));
-                    }
-                } else if self.settings.review_follows_caret && movement != Move::Still {
-                    step.followed = true;
-                    reviews.push((caret.row, read.caret_column));
-                    if let Some(keys) = self.keys.open_mut() {
-                        keys.followed = true;
-                    }
-                }
+        }
+        // The review position follows a caret that moved, whatever moved
+        // it ("The review anchor"). A caret on the last read's row and
+        // column, with no rows moved up and no resize, did not move, even
+        // on a blank row, which the alignment pairs with none. Otherwise it
+        // moved when it is not where the alignment carried the last read's
+        // caret, or when the alignment could not carry it, unless the
+        // screen was resized and the caret kept its column along its line.
+        let moved = |caret: &Caret| {
+            let Some(old) = previous.caret.as_ref() else {
+                return true;
+            };
+            if !resized
+                && outcome.rotation == 0
+                && (old.row, old.column) == (caret.row, caret.column)
+            {
+                return false;
             }
-        }
+            match &before {
+                Some(before) => (before.row, before.column) != (caret.row, caret.column),
+                None => !resized || old.column != caret.column,
+            }
+        };
+        step.followed =
+            self.settings.review_follows_caret && self.focused && caret.as_ref().is_some_and(moved);
         screen.caret.clone_from(&caret);
-        if self.fresh
-            && let Some(caret) = &caret
-        {
-            // The focus moves the review cursor to the caret ("The review anchor and following").
-            reviews.push((caret.row, read.caret_column));
-        }
         // The lines, top to bottom.
         let mut items: Vec<(usize, Speech)> = Vec::new();
         // New lines, each with its text, or none when it is blank.
@@ -1880,9 +1875,6 @@ impl TerminalReader {
         {
             self.keys.close();
         }
-        for (row, column) in reviews {
-            memory.set_review(row, column);
-        }
         // Of the read, only what "The memory" needs is kept.
         let dropped = memory.trim();
         self.screen.trim(dropped);
@@ -1925,10 +1917,7 @@ impl TerminalReader {
             && caret.text == origin.shown
             && before.is_none_or(|before| before.line != caret.line || before.shown == caret.text)
         {
-            return CaretAnswer {
-                back: true,
-                ..CaretAnswer::default()
-            };
+            return CaretAnswer::default();
         }
         // In a terminal Enter's answer is only new output, never the caret's
         // line, as NVDA turns off its new-line announcement in terminals
@@ -2114,11 +2103,7 @@ impl TerminalReader {
         } else if colours.is_some() {
             self.suggestion = None;
         }
-        CaretAnswer {
-            line: answer,
-            held,
-            back: false,
-        }
+        CaretAnswer { line: answer, held }
     }
 
     /// The last suggestion as it still shows after the caret in a read

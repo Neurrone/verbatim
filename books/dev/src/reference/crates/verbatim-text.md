@@ -112,10 +112,12 @@ terminal model").
     hash, and whether a program rewrote it).
   - `trim`: keep only the screen above the screen and the rows below it
     (see "What the memory keeps").
-  - `review`, `set_review`, `set_review_anchor` and `anchor`: the review
-    position, an `Anchor` (a row counted from the last read's first row,
-    negative in the history above it, a column in characters, and its
-    line's hash), set on any anchor or made on a row the memory keeps.
+  - `anchor`, `add_place`, `place` and `drop_place`: an `Anchor` (a row
+    counted from the last read's first row, negative in the history above
+    it, a column in characters, and its line's hash) made on a row the
+    memory keeps, and the places kept at anchors for the caller, which
+    move with their rows; Core's review position is one of them, the
+    memory keeping none of its own.
   - `marks`, `add_mark`, `replace_mark` and `newest_mark`: the command
     marks, at most `MARKS` (1,000), oldest dropped first.
   - `add_place`, `place` and `drop_place`: numbered anchors the caller
@@ -230,8 +232,8 @@ terminal model").
   keeps them equally well at two places. It is handled within itself,
   `Lost::MoreThan`: every row it did not keep is new; at more than one
   place only its screen is aligned, `Lost::Uncounted`; its anchors keep their places
-  (`keep_places`): the review position and the places take the line at
-  their place now, and a command mark keeps its own line, by which it is
+  (`keep_places`): the places take the line at their place now, and a
+  command mark keeps its own line, by which it is
   found, since after a full history moved the line at its place is
   another. After a start that shrank, the memory asks for a count
   read instead, and when that keeps nothing every row is new and the rows
@@ -239,8 +241,8 @@ terminal model").
   lost read is left to the caller to start the memory again.
 - Screens. A read keeping and pairing nothing is a new screen
   (`Switch::New`) when its screen starts at the document's start or the
-  aside screen is found in it: its rows are new, the review position goes
-  to the caret, and the command marks are set aside with their screen. A
+  aside screen is found in it: its rows are new, the places are dropped,
+  and the command marks are set aside with their screen. A
   new screen sets aside the one it replaced as a map from each row's hash
   to its least distance from the document's end; it is found when a row of
   it is no nearer the end than it was, and dropped when a read off the
@@ -251,11 +253,11 @@ terminal model").
 - Starting again, after a resize or `restart`: each anchor is found by its
   line's hash nearest its old place, at its character position within the
   line, so the review cursor stays on its character however the line
-  rewraps; a review position not found goes to the caret, a place not
-  found is dropped, a mark not found keeps its place.
+  rewraps; a place not found is dropped, a mark not found keeps its
+  place.
 - Anchors move with the alignment: a kept or rewritten row carries its
-  anchor, the column clamped; a gone row passes the review position to the
-  nearest surviving row above, or to the caret; above the read an anchor
+  anchor, the column clamped; a gone row passes a place to the nearest
+  surviving row above, or to the caret; above the read an anchor
   keeps its place relative to the shift, or, above a refused start, is
   found again by its line's hash. A command mark moves with its row and is
   dropped when its row was rewritten or is gone; Core resolves a mark by
@@ -297,7 +299,7 @@ fixed-hasher maps they replaced, kept as the simpler code
 one case of the design each, asserted whole: output, scrolls and
 rotations, footers, redrawn regions, wrapped lines, clears and reprints,
 the alternate screen and pagers, floods, lost reads of each count, the
-aside screen, the review position, and lingering rows. One more checks the
+aside screen, the places, and lingering rows. One more checks the
 `unicode-width` property that row splitting relies on.
 
 ## The terminal reading rules
@@ -347,8 +349,12 @@ every new line goes to Core.
   the colours.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
   `timer` due time, `count_read` and `history_block` as in the
-  `Outcome`, the read's `Outcome`, and `followed`, whether a key moved the
-  caret within its window and the review position followed it.
+  `Outcome`, the read's `Outcome`, and `followed`, whether the review
+  position follows the caret to this read's: with "review follows caret"
+  on, the focused terminal's caret left the row and column the last read
+  had it at, whatever moved it, or the alignment could not carry the last
+  read's caret, as from a blank row, unless a resize left it at the same
+  column along its line. Core keeps the review position.
 - `Speech`: a new line (`Line`, blank with empty text, which Core counts
   and does not speak; its text a `Text` sharing the read's string, so
   counting it never copies it), what a growing line gained (`Growth`), a
@@ -438,8 +444,8 @@ is dropped; a caret moved with no text change says a caret key's unit, or
 the landing rule for another key; a caret on another line says that line;
 gained and lost text at the caret are said; a new line at the caret is
 output. Enter is answered only by output, as NVDA turns off its new-line
-announcement in terminals. With "review follows caret" on, a key that
-moved the caret, or the focus arriving, moves the review position to it.
+announcement in terminals. With "review follows caret" on, a read whose
+caret moved, whatever moved it, moves the review position to it.
 
 Colours are compared in every read in a key's window: among rows whose
 text did not change, the one row whose colours changed, or the one row

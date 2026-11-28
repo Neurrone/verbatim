@@ -3,7 +3,7 @@
 //! alignment"): what each row of a read is (new, kept and from where, grown,
 //! rewritten and from which row, a lingering row returned, or a row shown
 //! before that carries no history), where each row of the last read went,
-//! how far its rows moved up, and where the anchors (the review position
+//! how far its rows moved up, and where the anchors (the places Core keeps
 //! and the command marks) are now. This is classification, not speech: the
 //! reading rules are built on [`Outcome`].
 //!
@@ -418,8 +418,8 @@ impl Row {
     }
 }
 
-/// A remembered place ("The memory"): the review position or a command
-/// mark.
+/// A remembered place ("The memory"): a place Core keeps, such as the
+/// review position, or a command mark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Anchor {
@@ -721,7 +721,6 @@ struct Screen {
     /// Whether the last read's screen showed text.
     shows_text: bool,
     lingering: Vec<Lingering>,
-    review: Option<Anchor>,
     /// The command marks, oldest first, at most [`MARKS`] ("Features and
     /// settings").
     marks: Vec<Anchor>,
@@ -1006,37 +1005,6 @@ impl TerminalMemory {
         self.screen.as_mut().map_or(0, Screen::trim)
     }
 
-    /// The review position.
-    #[must_use]
-    pub fn review(&self) -> Option<Anchor> {
-        self.screen.as_ref().and_then(|screen| screen.review)
-    }
-
-    /// Puts the review position on row `row` of the last read, at
-    /// `column`. Does nothing before the first read or on a row the
-    /// memory does not keep.
-    pub fn set_review(&mut self, row: usize, column: usize) {
-        if let Some(screen) = &mut self.screen
-            && let Some(found) = screen.row(row)
-        {
-            screen.review = Some(Anchor {
-                row: isize_of(row),
-                column,
-                line_hash: found.line_hash,
-            });
-        }
-    }
-
-    /// Puts the review position at `anchor`, which may be on a row above
-    /// the rows the memory keeps, in the history, whose line's hash the
-    /// caller read ("The review anchor and following"). Does nothing before
-    /// the first read.
-    pub fn set_review_anchor(&mut self, anchor: Anchor) {
-        if let Some(screen) = &mut self.screen {
-            screen.review = Some(anchor);
-        }
-    }
-
     /// An anchor on row `row` of the last read at `column`, clamped to the
     /// row's text, when the memory keeps the row.
     #[must_use]
@@ -1052,10 +1020,10 @@ impl TerminalMemory {
 
     /// Keeps a place at `anchor`, a position the caller holds in the
     /// terminal's text, such as the start of a row of text it sent on, and
-    /// returns its number. A place moves with its row as the review
-    /// position does, goes to the caret's row on a new screen, and is dropped when its
-    /// row cannot be followed, as when the history overflowed and its line
-    /// was not found again. Before the first read it is only numbered.
+    /// returns its number. A place moves with its row, and is dropped on a
+    /// new screen or when its row cannot be followed, as when the history
+    /// overflowed and its line was not found again. Before the first read
+    /// it is only numbered.
     pub fn add_place(&mut self, anchor: Anchor) -> u64 {
         self.next_place = self.next_place.saturating_add(1);
         let number = self.next_place;
@@ -1398,7 +1366,7 @@ impl TerminalMemory {
 
     /// A read that keeps nothing of the last read and pairs nothing, a new
     /// screen ("Screens"): its visible rows are new and its rows above them
-    /// silent. The review position goes to the caret, and the last read's
+    /// silent. The places are dropped, and the last read's
     /// screen and history block are set aside with its command marks in
     /// place of any earlier aside screen, whose marks come back at their
     /// places when this read is that screen coming back ("The aside
@@ -1410,12 +1378,11 @@ impl TerminalMemory {
         read: &Read,
         shape: &Outcome,
     ) -> Outcome {
-        let (width, height, caret) = (shape.width, shape.height, shape.caret);
+        let (width, height) = (shape.width, shape.height);
         let back = self.aside.take().filter(|aside| aside.found(&rows));
         self.aside = Some(Aside::of(current));
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
-        next.review = caret.and_then(|row| anchor_at(&next.rows, row, read.caret_column));
         if let Some(back) = back {
             next.keep_marks(&back.marks, None, back.total);
         }
@@ -1446,8 +1413,8 @@ impl TerminalMemory {
 
     /// The memory started again from `read` ("Starting again"): every row's
     /// history begins afresh and nothing is aligned; each anchor is found
-    /// by its line's text nearest its old place, or else the review
-    /// position goes to the caret, a place is dropped, and a command mark
+    /// by its line's text nearest its old place, or else a place is
+    /// dropped, and a command mark
     /// keeps its place, counted from the read's end, to be found by its
     /// text when a command looks for it.
     fn start_again(
@@ -1461,11 +1428,6 @@ impl TerminalMemory {
         let total = current.total();
         let found =
             |anchor: &Anchor| refind(*anchor, total, line_offset(current, anchor), &next.rows);
-        next.review = current.review.as_ref().and_then(found).or_else(|| {
-            shape
-                .caret
-                .and_then(|row| anchor_at(&next.rows, row, read.caret_column))
-        });
         next.places = current
             .places
             .iter()
@@ -1885,8 +1847,7 @@ fn commonest_shift(pairs: &[(usize, usize)], base: isize) -> isize {
 /// 2026-11-27; "A lost read"): on the read's row there, or above the read with its line's hash, found
 /// by its text when a command looks for it ("Features and settings"). A
 /// read from the document's start holds every place there is: above it, a
-/// command mark left the buffer, and the review position and a place go to
-/// its first row.
+/// command mark left the buffer, and a place goes to its first row.
 fn keep_places(next: &mut Screen, memory: &Screen, aligned: &Aligned) {
     let shift = aligned.place.saturating_sub(isize_of(memory.skipped));
     let fates = aligned.fates(memory);
@@ -1910,7 +1871,6 @@ fn keep_places(next: &mut Screen, memory: &Screen, aligned: &Aligned) {
             Err(_) => Some(Anchor { row, ..anchor }),
         }
     };
-    let review = memory.review.and_then(|anchor| kept(anchor, false));
     let places = memory
         .places
         .iter()
@@ -1922,7 +1882,6 @@ fn keep_places(next: &mut Screen, memory: &Screen, aligned: &Aligned) {
         .filter_map(|&mark| kept(mark, true))
         .collect();
     let newest_mark = memory.newest_mark.and_then(|mark| kept(mark, true));
-    next.review = review;
     next.places = places;
     next.marks = marks;
     next.newest_mark = newest_mark;
@@ -2438,7 +2397,6 @@ fn remember(
         caret: read_caret,
         shows_text: shows_text(&read.screen),
         lingering,
-        review: None,
         marks: Vec::new(),
         newest_mark: None,
         places: Vec::new(),
@@ -2446,11 +2404,8 @@ fn remember(
     };
     next.own_kept();
     let fates = aligned.fates(memory);
-    next.review = memory
-        .review
-        .and_then(|anchor| map_anchor(anchor, memory, aligned, &fates, &next, read));
-    // Above the last read a mark keeps its place, as the review position
-    // does ("The review anchor"), above a refused start too.
+    // Above the last read a mark keeps its place, as a place does ("The
+    // review anchor"), above a refused start too.
     let place = aligned.place.saturating_sub(isize_of(memory.skipped));
     next.marks = memory
         .marks
@@ -2481,7 +2436,7 @@ fn anchor_at(rows: &[Row], row: usize, column: usize) -> Option<Anchor> {
     })
 }
 
-/// The review position, or a place, after a read ("The review anchor and
+/// A place after a read ("The review anchor and
 /// following"): a kept row carries it to the row's new place, a rewritten
 /// row keeps it with its column clamped to the row's text, and so does a
 /// blank row written over in place, which the alignment, pairing no blank

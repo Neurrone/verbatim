@@ -381,15 +381,38 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
     // left the review cursor, at the caret when it followed it, as NVDA's
     // caret event lands before its review script runs.
     let node = cx.facts().navigator_object().map(|object| object.id);
-    let fresh = match node {
-        Some(node) if crate::terminal::reading::modelled(&cx.facts()) == Some(node) => {
-            crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
-            true
-        }
-        _ => false,
+    let pressing = match node {
+        Some(node) if crate::terminal::reading::modelled(&cx.facts()) == Some(node) => Some((
+            node,
+            fresh_then_follow(&mut cx, trace_id, node, due_us).await,
+        )),
+        _ => None,
     };
     let next = begin(&mut cx.facts_mut(), press);
-    run_next(cx, (press, fence), window, next, (due_us, fresh)).await;
+    let fresh = pressing.is_some();
+    run_next(&mut cx, (press, fence), window, next, (due_us, fresh)).await;
+    if let Some((node, seen)) = pressing {
+        crate::terminal_model::followed_since(&mut cx.facts_mut(), node, seen);
+    }
+}
+
+/// A review press's fresh read of the focused terminal `node`. The reads
+/// taken while the press waited for it, and the fresh read itself, came
+/// before its script, as NVDA's caret events queued before it do: a
+/// follow among them moves the review cursor to the caret now. Returns the
+/// count of follows after it, for the press to compare at its end
+/// (`terminal_model::followed_since`).
+async fn fresh_then_follow(
+    cx: &mut Cx<Entries>,
+    trace_id: verbatim_model::TraceId,
+    node: NodeId,
+    due_us: u64,
+) -> u64 {
+    let seen = crate::terminal_model::follows(&cx.facts(), node).unwrap_or_default();
+    crate::terminal::commands::fresh(cx, trace_id, node, due_us).await;
+    let mut facts = cx.facts_mut();
+    crate::terminal_model::followed_since(&mut facts, node, seen);
+    crate::terminal_model::follows(&facts, node).unwrap_or_default()
 }
 
 /// Runs a review press from `next` on: each read of its text, or the live
@@ -400,7 +423,7 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
 /// "Review commands as chained requests"), `fresh` when it was taken; and
 /// a read of flat text from the text the press read ([`flat_answer`]).
 async fn run_next(
-    mut cx: Cx<Entries>,
+    cx: &mut Cx<Entries>,
     (press, fence): (ReviewPress, Fence),
     window: crate::event_queue::RequestWindow,
     mut next: Next,
@@ -433,15 +456,14 @@ async fn run_next(
                     Answerer::Flat(text)
                 } else if crate::terminal::commands::answers(&cx.facts(), node, &points_of(&sent)) {
                     if !fresh {
-                        crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
+                        crate::terminal::commands::fresh(cx, trace_id, node, due_us).await;
                         fresh = true;
                     }
                     Answerer::Terminal(window, node)
                 } else {
                     Answerer::Outpost(window)
                 };
-                let Some(answers) = crate::text_request::ask(&mut cx, by, sent, due_us).await
-                else {
+                let Some(answers) = crate::text_request::ask(cx, by, sent, due_us).await else {
                     return;
                 };
                 answered(&mut cx.facts_mut(), trace_id, (node, press), then, &answers)
@@ -457,7 +479,7 @@ async fn run_next(
                     &crate::report_focus::ANNOUNCED_SET,
                 );
                 match crate::navigator::read_values(
-                    &mut cx,
+                    cx,
                     (window.process, window, object.id),
                     &set,
                     due_us,
@@ -498,31 +520,45 @@ async fn run_next(
 /// the last mark that way, or when the navigator is not the terminal Core
 /// models.
 pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence) {
-    let command = press.command;
     let window = match crate::navigator::found(&cx.facts()) {
         Found::On(on) => on.window,
         Found::Nothing | Found::Unread => return,
     };
-    let (node, from, place) = {
-        let facts = cx.facts();
-        let Some(navigator) = facts.navigator.as_ref() else {
-            return;
-        };
-        let Some(object) = navigator.object(&facts.versions) else {
-            return;
-        };
-        let (from, place) = match &navigator.text {
-            ReviewText::At(position) => (
-                TextPoint::At(point_of(position)),
-                LandingPlace::Column(position.column),
-            ),
-            _ => (TextPoint::Caret, LandingPlace::Start),
-        };
-        (object.id, from, place)
+    let Some(node) = cx.facts().navigator_object().map(|object| object.id) else {
+        return;
     };
     if crate::terminal::reading::modelled(&cx.facts()) != Some(node) {
         return;
     }
+    let due_us = cx.due_in(OTHER_DUE_US);
+    // It starts where its fresh read left the review cursor, at the caret
+    // when that read followed it, as any review press does.
+    let seen = fresh_then_follow(&mut cx, press.trace_id, node, due_us).await;
+    mark_move(&mut cx, (press, fence), (window, node), due_us).await;
+    crate::terminal_model::followed_since(&mut cx.facts_mut(), node, seen);
+}
+
+/// [`command_mark`] after its fresh read: the move from the review
+/// position, then the landing.
+async fn mark_move(
+    cx: &mut Cx<Entries>,
+    (press, fence): (ReviewPress, Fence),
+    (window, node): (crate::event_queue::RequestWindow, NodeId),
+    due_us: u64,
+) {
+    let command = press.command;
+    let (from, place) = match cx
+        .facts()
+        .navigator
+        .as_ref()
+        .map(|navigator| &navigator.text)
+    {
+        Some(ReviewText::At(position)) => (
+            TextPoint::At(point_of(position)),
+            LandingPlace::Column(position.column),
+        ),
+        _ => (TextPoint::Caret, LandingPlace::Start),
+    };
     let forward = command == ReviewCommand::NextCommandMark;
     let landing = Landing {
         place,
@@ -530,11 +566,8 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         edge: None,
         command,
     };
-    let due_us = cx.due_in(OTHER_DUE_US);
-    crate::terminal::commands::fresh(&mut cx, press.trace_id, node, due_us).await;
     let Some(outcome) =
-        crate::terminal::commands::command_mark(&mut cx, (window, node), (forward, from), due_us)
-            .await
+        crate::terminal::commands::command_mark(cx, (window, node), (forward, from), due_us).await
     else {
         return;
     };
@@ -557,6 +590,14 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         ),
     };
     run_next(cx, (press, fence), window, next, (due_us, true)).await;
+}
+
+/// A terminal's review position on `line`, a line Core's memory answered,
+/// at the caret it was read at: where the review cursor goes when it
+/// follows the caret.
+pub(crate) fn position_on(line: TextChunk) -> ReviewPosition {
+    let offset = text::byte_offset(line.offset);
+    position_at(&Arc::new(line), offset, true)
 }
 
 /// A review position on `line` at byte `offset`, which may be on its line

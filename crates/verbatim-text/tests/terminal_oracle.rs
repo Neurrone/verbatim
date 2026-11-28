@@ -47,17 +47,25 @@ struct Core {
     /// Whether the last read showed no text, so the memory did not take
     /// it ("A read with no text").
     blank: bool,
+    /// The place Core keeps for the review position, put at the caret of
+    /// the first read that shows one, as a review command there leaves
+    /// it; review following is off, so only its text moves it.
+    review: Option<u64>,
 }
 
 impl Core {
     fn new(stream: &Stream) -> Self {
         Self {
-            reader: TerminalReader::new(Settings::default()),
+            reader: TerminalReader::new(Settings {
+                review_follows_caret: false,
+                ..Settings::default()
+            }),
             query: Query::default(),
             at_ms: stream.at_ms.clone(),
             reads: 0,
             quiet: false,
             blank: false,
+            review: None,
         }
     }
 
@@ -203,13 +211,20 @@ impl Core {
                 above: screen_rows,
             });
         }
+        if self.review.is_none()
+            && let Some(caret) = self.reader.memory().caret()
+            && let Some(anchor) = self.reader.memory().anchor(caret.row, caret.column)
+        {
+            self.review = Some(self.reader.memory_mut().add_place(anchor));
+        }
         let memory = self.reader.memory();
         // A read with no text leaves the memory as it was, so where its rows
         // went and where the review position is are said of the read before
         // it, which the oracle cannot judge: the reader makes no claim then,
         // nor at the read after it.
         let blank = step.outcome.as_ref().is_some_and(|outcome| outcome.blank);
-        let mut heard = heard(&step, memory.review().map(|anchor| anchor.row));
+        let review = self.review.and_then(|place| memory.place(place));
+        let mut heard = heard(&step, review.map(|anchor| anchor.row));
         if blank || self.blank {
             heard.moved = None;
         }

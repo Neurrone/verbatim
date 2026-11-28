@@ -738,7 +738,7 @@ impl Logic for Entries {
         facts: &mut SrState,
         token: u64,
         outcome: Outcome<(verbatim_model::request::Reply, crate::event_queue::Ran)>,
-        (now, _): (Now, Option<Foreground>),
+        (now, _, front): (Now, Option<Foreground>, Option<&Entry>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let Some(bar) = crate::progress::ended(facts, token) {
@@ -747,7 +747,8 @@ impl Logic for Entries {
             return Vec::new();
         }
         let trace = facts.queue_trace.0;
-        crate::terminal::reading::answered(facts, token, outcome, (now, trace), said)
+        let pressing = matches!(front, Some(Entry::Press(press)) if press.reviews());
+        crate::terminal::reading::answered(facts, token, outcome, (now, trace, pressing), said)
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {

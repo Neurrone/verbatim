@@ -474,21 +474,29 @@ fn the_alternate_screen_opened_and_closed_is_a_new_screen_each_way() {
 fn the_review_position_stays_on_its_text_through_a_scroll_a_rotation_and_a_redraw() {
     let mut watch = Watch::console(10, 3, 2);
     watch.write("a\r\nb\r\nc");
-    watch.memory.set_review(1, 0);
+    let place = watch
+        .memory
+        .add_place(watch.memory.anchor(1, 0).expect("a kept row"));
     watch.write("\r\nd");
-    let review = |watch: &Watch| watch.memory.review().map(|anchor| anchor.row);
-    assert_eq!(review(&watch), Some(1), "scrolled: still on b");
+    let review = |watch: &Watch, place| watch.memory.place(place).map(|anchor| anchor.row);
+    assert_eq!(review(&watch, place), Some(1), "scrolled: still on b");
     watch.write("\r\ne\r\nf");
     assert_eq!(watch.texts(), ["b", "c", "d", "e", "f"]);
     assert_eq!(
-        review(&watch),
+        review(&watch, place),
         Some(0),
         "rotated: b is the first row of the screen above the screen"
     );
-    watch.memory.set_review(2, 0);
+    let place = watch
+        .memory
+        .add_place(watch.memory.anchor(2, 0).expect("a kept row"));
     watch.write("\x1b[3;1Hg");
     assert_eq!(watch.texts(), ["b", "c", "d", "e", "g"]);
-    assert_eq!(review(&watch), Some(2), "a redraw elsewhere: still on d");
+    assert_eq!(
+        review(&watch, place),
+        Some(2),
+        "a redraw elsewhere: still on d"
+    );
 }
 
 #[test]
@@ -582,14 +590,16 @@ fn a_scroll_on_the_alternate_screen_is_no_rotation() {
     // goes to the caret, since no row above it survived ("The review anchor and following").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("\x1b[?1049h\x1b[Ha\r\nb\r\nc");
-    watch.memory.set_review(0, 0);
+    let place = watch
+        .memory
+        .add_place(watch.memory.anchor(0, 0).expect("a kept row"));
     let outcome = watch.write("\r\nd");
     assert_eq!(watch.texts(), ["b", "c", "d"]);
     assert_eq!(outcome.rows, [moved(1), moved(2), NEW]);
     assert_eq!(outcome.old, [GONE, OldRow::Kept(0), OldRow::Kept(1)]);
     assert_eq!(outcome.rotation, 0);
     assert_eq!(
-        watch.memory.review(),
+        watch.memory.place(place),
         Some(Anchor {
             row: 2,
             column: 1,
@@ -603,11 +613,13 @@ fn the_review_position_on_a_gone_row_goes_to_the_nearest_surviving_row_above() {
     // The row it was on erased ("The review anchor and following"), it moves to the row above.
     let mut watch = Watch::console(10, 5, 10);
     watch.write("x\r\na\r\nb");
-    watch.memory.set_review(1, 0);
+    let place = watch
+        .memory
+        .add_place(watch.memory.anchor(1, 0).expect("a kept row"));
     watch.write("\x1b[2;1H\x1b[2K");
     assert_eq!(watch.texts(), ["x", "", "b"]);
     assert_eq!(
-        watch.memory.review(),
+        watch.memory.place(place),
         Some(Anchor {
             row: 0,
             column: 0,
@@ -1414,7 +1426,7 @@ fn the_review_position_above_a_refused_start_is_found_by_its_text_or_goes_to_the
         let mut watch = Watch::console(10, 3, 20);
         watch.write("a1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9");
         let first = isize::try_from(watch.memory.first_kept()).expect("a few rows");
-        watch.memory.set_review_anchor(Anchor {
+        let place = watch.memory.add_place(Anchor {
             row: first - 2,
             column: 0,
             line_hash: hash(line),
@@ -1424,7 +1436,7 @@ fn the_review_position_above_a_refused_start_is_found_by_its_text_or_goes_to_the
         assert_eq!(watch.texts(), ["a1", "a2", "new", "a7", "a8", "a9"]);
         assert_eq!(outcome.rows[3..], [kept(6), kept(7), kept(8)]);
         assert_eq!(
-            watch.memory.review(),
+            watch.memory.place(place),
             Some(Anchor {
                 row,
                 column,
@@ -1451,7 +1463,9 @@ fn the_review_position_on_a_gone_row_after_a_refused_start_never_moves_above_the
         .get(first)
         .map(|row| row.text.to_string());
     assert_eq!(kept_first.as_deref(), Some("a15"));
-    watch.memory.set_review(first + 2, 0);
+    let place = watch
+        .memory
+        .add_place(watch.memory.anchor(first + 2, 0).expect("a kept row"));
     let outcome = watch.write("\x1b[2J\x1b[3J\x1b[Hb1\r\nb2\r\nb3\r\nb4\r\na18\r\na19\r\na20");
     assert_eq!(watch.taken, 1, "one read");
     assert_eq!(watch.texts(), ["b2", "b3", "b4", "a18", "a19", "a20"]);
@@ -1460,7 +1474,7 @@ fn the_review_position_on_a_gone_row_after_a_refused_start_never_moves_above_the
         [kept(first + 3), kept(first + 4), kept(first + 5)]
     );
     assert_eq!(
-        watch.memory.review(),
+        watch.memory.place(place),
         Some(Anchor {
             row: 5,
             column: 3,

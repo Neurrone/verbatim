@@ -308,16 +308,17 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// A request Core's facts asked under `token` ended with `outcome`, a
     /// result with who ran it, at `now` with `foreground` the foreground
-    /// record: what the facts keep of it changes, what that says goes into
-    /// `said`, and the entries returned join the back.
+    /// record and `front` the entry running, if one is: what the facts
+    /// keep of it changes, what that says goes into `said`, and the entries
+    /// returned join the back.
     fn facts_answered(
         facts: &mut Self::Facts,
         token: u64,
         outcome: Outcome<(verbatim_model::request::Reply, Ran)>,
-        (now, foreground): (Now, Option<Foreground>),
+        (now, foreground, front): (Now, Option<Foreground>, Option<&Self::Entry>),
         said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, token, outcome, now, foreground, said);
+        let _ = (facts, token, outcome, now, foreground, front, said);
         Vec::new()
     }
 

@@ -342,17 +342,22 @@ Verbatim: **different**.
 
 ### The review cursor while output is written
 
-NVDA's review cursor follows the caret to the prompt when a script
-prints lines below a line being reviewed. Verbatim: **different**
-(Dickson, 2026-10-23; rule 24 and the model's "The review cursor"):
-with "review follows caret" on, the review cursor follows the caret only
-when a key moved the caret or the focus arrived, and otherwise stays on
-its text, moving with it as output scrolls; with it off, only the user
-moves it. So reviewing a line above the caret and letting a script print
-two lines leaves Verbatim's review cursor on the line reviewed. The
-`*_review_grid` scenarios still assert NVDA's behaviour; they are among
-the terminal scenarios `docs/roadmap.md`, "The terminal redesign",
-brings back to passing.
+NVDA's review cursor follows the caret at each caret event of the focus
+while "caret moves review cursor" is on (`nvda/source/review.py` 159 to
+190, called from `nvda/source/NVDAObjects/__init__.py` 1424 to 1429), so
+it follows the caret to the prompt when a script prints lines below a
+line being reviewed; with the setting off it stays where the user left
+it, and after the focus it is made from the caret at the first review
+command (`nvda/source/api.py` 235 to 244 and 317 to 334). Verbatim:
+**matched** (Dickson, 2026-11-28; rule 24 and the model's "The review
+cursor"). With the setting on, a read whose caret moved, whatever moved
+it, puts the review cursor at that read's caret: after a command, Review
+current line reads the prompt the output left the caret on, and a review
+press while output streams starts from the caret its fresh read found. A
+read taken while a review press waits on the terminal moves the cursor
+once the press has spoken and landed, as NVDA's caret event lands after
+the script that was running. With the setting off, output never moves
+the review cursor; it moves with its text as output scrolls.
 
 - Approved by Dickson (2026-11-27): a review command whose fresh read
   lands between a program's clear and its reprint, the screen showing no

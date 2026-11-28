@@ -91,7 +91,6 @@ fn output(lines: Vec<String>) -> Out {
 #[derive(Clone, Debug, Default)]
 struct TerminalSpeech {
     items: Vec<TerminalItem>,
-    followed: bool,
 }
 
 /// What terminal `node` wrote, which a read begun at `observed_at_ms` or
@@ -106,7 +105,6 @@ struct Out {
 fn said_of(speech: TerminalSpeech) -> Said {
     Said {
         items: speech.items.into_iter().map(SaidItem::Item).collect(),
-        followed: speech.followed,
     }
 }
 
@@ -164,7 +162,6 @@ fn speech_of(skipped: Option<Skipped>, lines: Vec<String>) -> TerminalSpeech {
             .into_iter()
             .chain(lines.into_iter().map(TerminalItem::Output))
             .collect(),
-        followed: false,
     }
 }
 
@@ -561,7 +558,7 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         &mut state,
         read,
         crate::event_queue::Outcome::Result((answer, ran)),
-        (Now::from_raw(1_000), TraceId::from_raw(4)),
+        (Now::from_raw(1_000), TraceId::from_raw(4), false),
         &mut said,
     );
     assert_eq!((entries, said), (Vec::new(), Vec::new()));
@@ -929,17 +926,7 @@ fn a_lines_growth_skipped_is_not_counted_as_a_line() {
     items.push(TerminalItem::Output("line 4".to_owned()));
     items.push(TerminalItem::Growth("0".to_owned()));
     items.extend(lines(41..=100).into_iter().map(TerminalItem::Output));
-    playback.feed(
-        &mut state,
-        &said(
-            TERMINAL,
-            0,
-            TerminalSpeech {
-                items,
-                followed: false,
-            },
-        ),
-    );
+    playback.feed(&mut state, &said(TERMINAL, 0, TerminalSpeech { items }));
     let mut expected = lines(1..=30);
     expected.push("skipped 40".to_owned());
     expected.extend(lines(71..=100));
@@ -960,17 +947,7 @@ fn a_growth_at_the_boundary_of_the_lines_a_skip_keeps_stays_with_its_line() {
     items.push(TerminalItem::Output("line 7".to_owned()));
     items.push(TerminalItem::Growth("0".to_owned()));
     items.extend(lines(71..=99).into_iter().map(TerminalItem::Output));
-    playback.feed(
-        &mut state,
-        &said(
-            TERMINAL,
-            0,
-            TerminalSpeech {
-                items,
-                followed: false,
-            },
-        ),
-    );
+    playback.feed(&mut state, &said(TERMINAL, 0, TerminalSpeech { items }));
     let mut expected = lines(1..=30);
     expected.push("skipped 39".to_owned());
     expected.push("line 7".to_owned());
@@ -1049,7 +1026,6 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
             TerminalItem::Output("line 41".to_owned()),
             TerminalItem::Answer("> banana".to_owned()),
         ],
-        followed: false,
     };
     playback.answer_with(&mut state, overtaken, Some(read));
     assert_eq!(playback.play_all(&mut state), ["> banana"]);
@@ -1392,7 +1368,6 @@ fn the_answers_to_keys_are_spoken_at_once_ahead_of_output() {
             TerminalItem::Suggestion("ls -la".to_owned()),
             TerminalItem::Output("output".to_owned()),
         ],
-        followed: false,
     };
     let effects = say(&mut state, &said(TERMINAL, 0, speech));
     // The answers, in order, then the output's first line handed to
@@ -1416,7 +1391,6 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
     let mut state = terminal();
     let echo = TerminalSpeech {
         items: vec![TerminalItem::Echo("ls".to_owned())],
-        followed: false,
     };
     let effects = say(&mut state, &said(TERMINAL, 0, echo.clone()));
     assert_eq!(spoken(&effects), ["l", "s"]);
@@ -1555,7 +1529,7 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
 }
 
 #[test]
-fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
+fn the_first_review_command_reads_at_the_caret_and_stays_at_that_place() {
     use verbatim_model::request::{Answer, Outcome, Press, PressAction, QueueEffect, QueueInput};
     let mut state = terminal();
     // A review command pressed, its fresh read of the terminal answered
@@ -1638,14 +1612,6 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         "{:?}",
         text(&state)
     );
-    // The reading rules found that a key moved the caret, and the review
-    // cursor followed it: the next command reads at the caret.
-    let followed = TerminalSpeech {
-        items: Vec::new(),
-        followed: true,
-    };
-    let _ = say(&mut state, &said(TERMINAL, 0, followed));
-    assert_eq!(text(&state), Some(crate::state::ReviewText::Caret));
 }
 
 #[test]
@@ -1669,7 +1635,6 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
             TerminalItem::Echo("a".to_owned()),
             TerminalItem::Output("before the cut".to_owned()),
         ],
-        followed: false,
     };
     let effects = say(&mut state, &said(TERMINAL, 4_999, speech));
     assert_eq!(spoken(&effects), ["a"]);
@@ -1933,7 +1898,6 @@ fn a_cut_after_the_last_line_while_the_release_is_out_drops_the_backlog() {
             TerminalItem::Output("line 41".to_owned()),
             TerminalItem::Answer("> banana".to_owned()),
         ],
-        followed: false,
     };
     playback.answer_with(&mut state, token, Some(read));
     assert_eq!(playback.play_all(&mut state), ["> banana"]);
@@ -1956,7 +1920,7 @@ fn a_release_read_refused_after_the_last_line_decides_the_backlog_at_once() {
         crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
             verbatim_model::request::Refusal::Unsupported,
         )),
-        (Now::from_raw(1_000), TraceId::from_raw(4)),
+        (Now::from_raw(1_000), TraceId::from_raw(4), false),
         &mut said,
     );
     assert_eq!(entries, Vec::new());
@@ -2182,7 +2146,7 @@ fn a_flood_waiting_for_its_release_goes_on_after_its_follow_is_refused() {
         crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
             verbatim_model::request::Refusal::Unsupported,
         )),
-        (Now::from_raw(600_500), TraceId::from_raw(4)),
+        (Now::from_raw(600_500), TraceId::from_raw(4), false),
         &mut said,
     );
     assert_eq!(entries, Vec::new());
@@ -2275,10 +2239,7 @@ fn answered_begun(
     let entry = super::reading::answered_with(
         state,
         token,
-        said_of(TerminalSpeech {
-            items,
-            followed: false,
-        }),
+        said_of(TerminalSpeech { items }),
         (began_us, Now::from_raw(began_us + 1)),
     )
     .expect("the read is out");

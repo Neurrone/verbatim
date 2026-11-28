@@ -63,6 +63,32 @@ fn showing(width: usize, height: usize, history: usize, text: &str) -> Session {
     Session::with(outpost)
 }
 
+/// [`showing`], with "caret moves review cursor" off: output never moves
+/// the review cursor, so what a test of a review place surviving output
+/// shows is the place's own move ("The review anchor and following").
+fn showing_unfollowed(width: usize, height: usize, history: usize, text: &str) -> Session {
+    let mut outpost = Outpost::new(Flavor::ConsoleHost, width, height, history);
+    outpost.sim.write(text.as_bytes());
+    Session::with_settings(
+        outpost,
+        ReaderSettings {
+            follow_caret: false,
+            ..ReaderSettings::default()
+        },
+    )
+}
+
+/// Turns "caret moves review cursor" on or off.
+fn set_following(session: &mut Session, on: bool) {
+    session.input(&verbatim_model::Arrival {
+        at_us: 0,
+        input: Input::Settings(ReaderSettings {
+            follow_caret: on,
+            ..ReaderSettings::default()
+        }),
+    });
+}
+
 /// Lines `range`, each ended.
 fn numbered(range: std::ops::RangeInclusive<u32>) -> String {
     range.fold(String::new(), |mut text, line| {
@@ -81,7 +107,7 @@ fn new_output_is_spoken_line_by_line() {
 
 #[test]
 fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
-    let mut session = showing(20, 4, 100, "one\r\ntwo\r\nthree\r\n");
+    let mut session = showing_unfollowed(20, 4, 100, "one\r\ntwo\r\nthree\r\n");
     // Up from the caret's line, the blank row below the output, to "three"
     // and "two", each after a fresh read.
     session.press(&command(ReviewCommand::ReviewPreviousLine));
@@ -160,13 +186,85 @@ fn a_line_move_starts_where_its_fresh_read_left_the_review_cursor() {
     assert_eq!(session.requests(), [FRESH, FRESH]);
 }
 
+#[test]
+fn output_moves_the_review_cursor_to_the_caret_only_with_following_on() {
+    // The review cursor put on "a>" by a review command, then output with
+    // no key moves the caret to "b>": with "caret moves review cursor" on
+    // the review cursor follows it, as NVDA's caret event moves it
+    // (`nvda/source/review.py` 159 to 190); with it off it stays on "a>".
+    for (on, line) in [(true, "b>"), (false, "a>")] {
+        let mut session = showing(20, 4, 100, "a>");
+        set_following(&mut session, on);
+        session.press(&command(ReviewCommand::ReviewCurrentLine));
+        assert_eq!(session.heard(), plain(&["a>"]));
+        session.write("\r\nout1\r\nb>", 200);
+        assert_eq!(session.heard(), plain(&["out1", "b>"]));
+        session.press(&command(ReviewCommand::ReviewCurrentLine));
+        assert_eq!(session.heard(), plain(&[line]), "following on: {on}");
+    }
+}
+
+#[test]
+fn with_following_on_each_review_press_starts_from_the_caret_output_moved() {
+    // Review previous line while a program prints: with following on,
+    // each press's fresh read finds the caret moved by the output and
+    // starts from it, so each says the line above the caret; with it off
+    // the second goes on from the first.
+    for (on, second) in [(true, "four"), (false, "two")] {
+        let mut session = showing(20, 6, 100, "one\r\ntwo\r\nthree\r\n");
+        set_following(&mut session, on);
+        session.press(&command(ReviewCommand::ReviewPreviousLine));
+        assert_eq!(session.heard(), plain(&["three"]));
+        session.write("four\r\n", 200);
+        assert_eq!(session.heard(), plain(&["four"]));
+        session.press(&command(ReviewCommand::ReviewPreviousLine));
+        assert_eq!(session.heard(), plain(&[second]), "following on: {on}");
+    }
+}
+
+#[test]
+fn turning_following_off_leaves_the_review_cursor_where_it_last_followed() {
+    // Following on, output moves the review cursor to "b>"; turned off,
+    // later output leaves it there, on its text as the output scrolls it.
+    let mut session = showing(20, 4, 100, "a>");
+    session.write("\r\nb>", 200);
+    let _ = session.heard();
+    set_following(&mut session, false);
+    session.write("\r\nc\r\nd>", 300);
+    let _ = session.heard();
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["b>"]));
+}
+
+#[test]
+fn a_follow_while_a_review_press_waits_on_the_history_moves_the_review_cursor_after_it_lands() {
+    // Following on, the review cursor on "line 1", above the memory's rows.
+    // Review current line reads the history; before it is answered the
+    // program prints and shows its prompt, read and followed meanwhile.
+    // The press says the output read before its words and then "line 1",
+    // landing there, and the follow taken while it ran moves the review
+    // cursor to the caret after it, as NVDA's caret event lands after the
+    // script that was running: once the output stops, Review current line
+    // says the prompt.
+    let mut session = showing(20, 3, 100, &numbered(1..=12));
+    session.press(&command(ReviewCommand::ReviewTop));
+    assert_eq!(session.heard(), plain(&["line 1"]));
+    let _ = session.requests();
+    session.output_before_histories = [("ten\r\neleven\r\n$ ".to_owned(), 300)].into();
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["ten", "eleven", "line 1", "$"]));
+    assert_eq!(session.requests(), [FRESH, Asked::History]);
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["$"]));
+}
+
 /// A terminal of four rows whose review position is on "two", in the
 /// history above the rows the memory keeps, with nine lines printed below
 /// it and seven above it, so that no history read below reaches the
 /// document's start.
 fn reviewing_two() -> Session {
     let text = format!("{}one\r\ntwo\r\nthree\r\n", numbered(1..=6));
-    let mut session = showing(20, 4, 100, &text);
+    let mut session = showing_unfollowed(20, 4, 100, &text);
     session.press(&command(ReviewCommand::ReviewPreviousLine));
     session.press(&command(ReviewCommand::ReviewPreviousLine));
     session.write("four\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\n", 200);
@@ -234,7 +332,7 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     // heard first and then "skipped lines" and "line 30" to "line 40"; the
     // difference is pending Dickson's approval (`docs/parity/terminals.md`,
     // "The backlog").
-    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    let mut session = showing_unfollowed(20, 3, 9, &numbered(1..=12));
     session.press(&command(ReviewCommand::ReviewTop));
     session.press(&command(ReviewCommand::ReviewNextLine));
     session.press(&command(ReviewCommand::ReviewNextLine));
@@ -267,7 +365,7 @@ fn a_review_place_whose_line_left_its_search_keeps_its_place() {
     // every row further up than a screen. Its line is nowhere from its
     // place to a screen above it, so it keeps its place and reads the row
     // there now ("The review anchor").
-    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    let mut session = showing_unfollowed(20, 3, 9, &numbered(1..=12));
     session.press(&command(ReviewCommand::ReviewTop));
     session.press(&command(ReviewCommand::ReviewNextLine));
     session.press(&command(ReviewCommand::ReviewNextLine));
@@ -288,7 +386,7 @@ fn a_review_place_above_the_memory_is_found_lower_after_its_history_was_printed_
     // below the place being searched as well as a screen above it ("The
     // review anchor").
     let lines = numbered(1..=12);
-    let mut session = showing(20, 3, 100, &lines);
+    let mut session = showing_unfollowed(20, 3, 100, &lines);
     session.press(&command(ReviewCommand::ReviewTop));
     session.press(&command(ReviewCommand::ReviewNextLine));
     session.press(&command(ReviewCommand::ReviewNextLine));
@@ -1399,7 +1497,7 @@ fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
     // has scrolled the rows and been read, so the answer is counted from
     // that newer read. Each press still lands on its mark's own line, with
     // one search.
-    let mut session = showing(30, 4, 100, "$ ");
+    let mut session = showing_unfollowed(30, 4, 100, "$ ");
     let mut at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     at_ms = enter(&mut session, "echo two", "two\r\n", at_ms);
     session.write(&numbered(1..=20), at_ms);
@@ -1483,7 +1581,7 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
     // the key line, each answered in press order with what its own read
     // finds: the line after "$ line 1", the previous command mark, and the
     // line above it, each from where the one before left the review cursor.
-    let mut session = showing(30, 4, 100, "intro\r\n$ ");
+    let mut session = showing_unfollowed(30, 4, 100, "intro\r\n$ ");
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     session.write(&numbered(1..=20), at_ms);
     let _ = session.heard();

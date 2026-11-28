@@ -36,7 +36,6 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                 text: "x".to_owned(),
             },
         ],
-        followed: true,
         ..Step::default()
     };
     assert_eq!(
@@ -54,7 +53,6 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                 SaidItem::Item(TerminalItem::Growth("grown".to_owned())),
                 SaidItem::Item(TerminalItem::Echo("x".to_owned())),
             ],
-            followed: true,
         }
     );
 }
@@ -326,8 +324,46 @@ impl Watch {
             (None, None) => crate::terminal::reader::WindowRead::First,
             (None, Some(height)) => crate::terminal::reader::WindowRead::HistoryBlock { height },
         };
-        super::take(&mut self.state, watched(), (&asked, &reply), waited)
+        super::take(
+            &mut self.state,
+            watched(),
+            (&asked, &reply),
+            (waited, false),
+        )
     }
+}
+
+/// The review cursor, said-all over, left at a point in the terminal's
+/// text with no say-all running: a read whose caret moved, with following
+/// on, moves it to a place at that caret, since only a say-all that is
+/// running keeps it ("The review anchor").
+#[test]
+fn a_review_point_a_finished_say_all_left_follows_the_caret() {
+    let mut watch = Watch::new();
+    let _ = watch.write("one\r\na>", 0, false);
+    let terminal = verbatim_model::NodeSnapshot {
+        id: watched(),
+        backend: verbatim_model::Backend::Uia,
+        role: Role::Terminal,
+        name: None,
+        value: None,
+        states: verbatim_model::StateSet::default(),
+        details: verbatim_model::NodeDetails::default(),
+    };
+    let mut navigator = crate::state::Navigator::on(terminal, None);
+    navigator.text =
+        crate::state::ReviewText::Point(verbatim_model::TextPosition::at(TextAnchor(1)));
+    watch.state.navigator = Some(navigator);
+    let _ = watch.write("\r\nout\r\nb>", 100, false);
+    let text = watch
+        .state
+        .navigator
+        .as_ref()
+        .map(|navigator| &navigator.text);
+    assert!(
+        matches!(text, Some(crate::state::ReviewText::At(position)) if position.line.text == "b>"),
+        "{text:?}"
+    );
 }
 
 /// The speech the rules' `speech` becomes.

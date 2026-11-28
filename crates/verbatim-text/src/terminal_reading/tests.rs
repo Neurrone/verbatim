@@ -33,6 +33,9 @@ struct Term {
     query: Query,
     /// Whether the last read moved the review position to the caret.
     followed: bool,
+    /// The place Core would keep for the review position: minted at the
+    /// caret of each read that followed it, as Core mints it.
+    review: Option<u64>,
     /// The keys' windows joined, from the first key's time to the last
     /// window's end: a read within it takes the screen's colours.
     colours_window: Option<(u64, u64)>,
@@ -60,6 +63,7 @@ impl Term {
             reader: TerminalReader::new(settings),
             query: Query::default(),
             followed: false,
+            review: None,
             colours_window: None,
             caret_ahead: 0,
         };
@@ -174,6 +178,11 @@ impl Term {
             // Whether the review position followed is asserted beside where
             // it is ([`Term::review`]).
             self.followed = step.followed;
+            if step.followed
+                && let Some(caret) = self.reader.memory().caret()
+            {
+                self.put_review(caret.row, caret.column);
+            }
             return Step {
                 outcome: None,
                 followed: false,
@@ -201,7 +210,21 @@ impl Term {
 
     /// The row the review position is on.
     fn review(&self) -> Option<isize> {
-        self.reader.memory().review().map(|anchor| anchor.row)
+        let place = self.review?;
+        self.reader.memory().place(place).map(|anchor| anchor.row)
+    }
+
+    /// Puts the review position on row `row` of the last read at `column`,
+    /// as a review command or a follow leaves it: a place in place of the
+    /// last.
+    fn put_review(&mut self, row: usize, column: usize) {
+        let memory = self.reader.memory_mut();
+        if let Some(old) = self.review.take() {
+            memory.drop_place(old);
+        }
+        self.review = memory
+            .anchor(row, column)
+            .map(|anchor| memory.add_place(anchor));
     }
 }
 
@@ -786,13 +809,13 @@ fn a_change_found_after_the_keys_window_is_output() {
 // "The review anchor and following": the review cursor.
 
 #[test]
-fn the_review_cursor_follows_the_caret_a_key_moved() {
+fn the_review_cursor_follows_the_caret_whatever_moved_it() {
     let mut term = Term::new(20, 5, 10);
     term.write("a\r\nb\r\nc", 100);
     assert_eq!(
         (term.review(), term.followed),
-        (Some(0), false),
-        "the program's cursor is not followed"
+        (Some(2), true),
+        "the program's output moved the caret"
     );
     term.key(KeyKind::Caret(Unit::Line), 1000);
     assert_eq!(
@@ -809,19 +832,26 @@ fn with_review_following_off_only_the_user_moves_the_review_cursor() {
         ..Settings::default()
     };
     let mut term = Term::with(20, 5, 10, settings);
-    term.write("a\r\nb\r\nc", 100);
+    term.write("a\r\nb", 100);
+    assert!(!term.followed, "output does not move it");
+    term.put_review(0, 0);
+    term.write("\r\nc", 200);
     term.key(KeyKind::Caret(Unit::Line), 1000);
     term.write("\x1b[A", 1050);
-    assert_eq!(term.review(), Some(0));
+    assert_eq!((term.review(), term.followed), (Some(0), false));
 }
 
 #[test]
-fn the_focus_arriving_moves_the_review_cursor_to_the_caret() {
+fn the_focus_arriving_alone_does_not_move_the_review_cursor() {
+    // The first read after the focus follows only a caret that moved, as
+    // any read does; where the review cursor starts after the focus is
+    // Core's, the caret at the first review command.
     let mut term = Term::new(20, 5, 10);
     term.write("a\r\nb\r\nc", 100);
+    term.put_review(0, 0);
     term.reader.focus();
     assert_eq!(term.read(300), quiet(None));
-    assert_eq!(term.review(), Some(2));
+    assert_eq!((term.review(), term.followed), (Some(0), false));
 }
 
 // "Rows the keys own": rows away from the caret that keys change.
@@ -1193,6 +1223,19 @@ fn a_resize_speaks_nothing_but_the_caret_line_when_it_changed() {
 }
 
 #[test]
+fn a_resize_moves_the_review_cursor_only_when_the_caret_left_its_column() {
+    // A resize keeps no row, so the alignment cannot carry the last read's
+    // caret: a caret at the same column along its line did not move, and
+    // one at another column did ("The review anchor").
+    let mut reader = TerminalReader::new(Settings::default());
+    reader.read(&screen_read(&["abc", "$ x"], 10, 1, 3, 0), false, None);
+    let kept = reader.read(&screen_read(&["abc", "$ x"], 20, 1, 3, 100), false, None);
+    assert!(!kept.followed, "the caret kept its column");
+    let moved = reader.read(&screen_read(&["abc", "$ x"], 30, 1, 1, 200), false, None);
+    assert!(moved.followed, "the caret left its column");
+}
+
+#[test]
 fn a_resize_keeps_the_review_cursors_character_within_its_line() {
     // The review cursor on "m", on a wrapped line's second row: the line
     // rewrapped onto one row keeps it on "m" ("Starting again").
@@ -1212,10 +1255,11 @@ fn a_resize_keeps_the_review_cursors_character_within_its_line() {
     };
     let mut reader = TerminalReader::new(Settings::default());
     reader.read(&read(["abcdefghijklmn", "zz", "$ x"], 10, 0), false, None);
-    reader.memory_mut().set_review(1, 2);
+    let anchor = reader.memory().anchor(1, 2).expect("the row is kept");
+    let place = reader.memory_mut().add_place(anchor);
     reader.read(&read(["abcdefghijklmn", "zz", "$ x"], 20, 100), false, None);
     assert_eq!(
-        reader.memory().review(),
+        reader.memory().place(place),
         Some(Anchor {
             row: 0,
             column: 12,
@@ -1370,9 +1414,10 @@ fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_floo
     // A flood under a footer, with "report new output" off, starts the
     // memory again from the read; the review position on the footer is
     // found again by its line, the read's last row ("Starting again").
+    // Review following is off, so the output leaves it there.
     let settings = Settings {
         report_new_output: false,
-        ..Settings::default()
+        review_follows_caret: false,
     };
     let mut term = Term::with(10, 3, 6, settings);
     term.write(
@@ -1380,14 +1425,15 @@ fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_floo
         100,
     );
     let footer = term.reader.memory().rows().len() - 1;
-    term.reader.memory_mut().set_review(footer, 2);
+    term.put_review(footer, 2);
     term.write(
         "\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny",
         200,
     );
     assert_eq!(footer, 8);
+    let place = term.review.expect("a place");
     assert_eq!(
-        term.reader.memory().review(),
+        term.reader.memory().place(place),
         Some(Anchor {
             row: 5,
             column: 2,
@@ -1402,11 +1448,13 @@ fn with_output_unreported_the_review_position_is_found_by_its_line_when_a_clear_
     // Windows Terminal's clear moves the screen into the history, so the
     // read's start is refused; with "report new output" off the memory
     // starts again from the read, and the review position is found again
-    // by its line, which the read still shows ("Starting again").
+    // by its line, which the read still shows ("Starting again"). Review
+    // following is off, so the output leaves it there.
     let settings = Settings {
         report_new_output: false,
-        ..Settings::default()
+        review_follows_caret: false,
     };
+
     let mut term = Term::of(Flavor::WindowsTerminal, 10, 3, 20, settings);
     let lines = (1..=22)
         .map(|number| format!("line {number}"))
@@ -1414,10 +1462,11 @@ fn with_output_unreported_the_review_position_is_found_by_its_line_when_a_clear_
         .join("\r\n");
     term.write(&lines, 100);
     let screen_row = term.reader.memory().rows().len() - 2;
-    term.reader.memory_mut().set_review(screen_row, 2);
+    term.put_review(screen_row, 2);
     assert_eq!(term.write("\x1b[H\x1b[2Jx", 200), quiet(None));
+    let place = term.review.expect("a place");
     assert_eq!(
-        term.reader.memory().review(),
+        term.reader.memory().place(place),
         Some(Anchor {
             row: 3,
             column: 2,
@@ -1461,9 +1510,9 @@ fn a_cursor_the_program_moves_while_it_draws_and_parks_back_says_nothing() {
     // "Keys and their window": a key the program reads unshown scrolls rows down a
     // line; the program's cursor goes to the top as it resets the scroll
     // region, to the end of the row it writes, and back to where the key
-    // found it. Read at each of those, only the new row is spoken. No read
-    // can tell the jump to the top from a key's move, so the review cursor
-    // follows it, and comes back with the caret.
+    // found it. Read at each of those, only the new row is spoken. The
+    // review cursor follows the caret to each place a read finds it, as it
+    // follows any caret that moved, and so ends where the caret parked.
     let mut term = Term::new(20, 5, 10);
     term.write(
         "row 1\r\nrow 2\r\nrow 3\r\n\r\nstatus: ready\x1b[5;14H",

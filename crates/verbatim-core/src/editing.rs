@@ -547,11 +547,10 @@ fn place_caret(
 /// and the navigator is on that node: the next review command reads the
 /// line at the caret as the outpost finds it ([`ReviewText::Caret`]).
 ///
-/// A terminal's review cursor follows the caret only when its reading rules
-/// find that a key moved the caret, which its outpost tells
-/// (`crate::terminal`), never on a caret report alone, since a program
-/// moves the cursor as it draws (`books/dev/src/explanation/design/terminal-model.md`,
-/// "Reading rules", rule 24).
+/// A terminal's review cursor is not moved here: Core keeps it as a place
+/// and moves it at each read whose caret moved (`crate::terminal_model`,
+/// `books/dev/src/explanation/design/terminal-model.md`, "Reading rules",
+/// rule 24).
 pub(crate) fn follow_caret(state: &mut SrState, node: NodeId) {
     if state.settings.follow_caret
         && state

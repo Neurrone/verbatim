@@ -104,7 +104,7 @@ pub(crate) fn answers(state: &SrState, node: NodeId, points: &[TextPoint]) -> bo
 }
 
 /// The anchors Core holds of terminal `node`'s outpost.
-fn held_anchors(state: &SrState, node: NodeId) -> BTreeSet<TextAnchor> {
+pub(crate) fn held_anchors(state: &SrState, node: NodeId) -> BTreeSet<TextAnchor> {
     node.outpost()
         .and_then(|outpost| state.held_anchors().remove(&outpost))
         .unwrap_or_default()
